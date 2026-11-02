@@ -10,7 +10,8 @@
 # itself must not run as root).
 #
 # Environment:
-#   KUBERNETES_VERSION       Kubernetes version baked in (default 1.36.5)
+#   KUBERNETES_VERSION       Kubernetes version baked in (default: kubernetes-version,
+#                            also read by tests/cluster/run.sh)
 #   CAPO_IMAGE_ELEMENTS_REF  capo-image-elements commit (pinned, bump deliberately)
 #   OUTPUT_DIR               where the qcow2 and its .sha256 go (default images/output)
 #   TMPDIR                   work dir for this script and diskimage-builder
@@ -18,7 +19,7 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
-KUBERNETES_VERSION="${KUBERNETES_VERSION:-1.36.5}"
+KUBERNETES_VERSION="${KUBERNETES_VERSION:-$(< "${SCRIPT_DIR}/kubernetes-version")}"
 CAPO_IMAGE_ELEMENTS_REF="${CAPO_IMAGE_ELEMENTS_REF:-ebb93b14290312a7598c5871aa258a9343df4d17}"
 OUTPUT_DIR="${OUTPUT_DIR:-${SCRIPT_DIR}/output}"
 
