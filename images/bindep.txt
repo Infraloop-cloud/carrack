@@ -1,0 +1,30 @@
+# Packages the BUILD HOST needs to run disk-image-create (partitioning,
+# loop-mounting, debootstrap, ...) — not packages installed into the image.
+#
+# Ubuntu subset of diskimage-builder's own bindep.txt
+# (https://opendev.org/openstack/diskimage-builder/src/branch/master/bindep.txt).
+# capo-image-elements' bindep.txt only lists debootstrap and qemu-utils and
+# misses e.g. gdisk (sgdisk), which partitioning needs.
+#
+# Install with: sudo apt-get install -y $(uv run --project images bindep -b -f images/bindep.txt)
+
+binutils
+bzip2
+util-linux
+dosfstools
+gdisk
+kpartx
+sudo
+curl
+git
+squashfs-tools
+gnupg2
+apt-transport-https
+inetutils-ping
+qemu-utils
+uuid-runtime
+debootstrap
+zstd
+procps
+# virt-cat / virt-ls, used to check the built image's contents
+libguestfs-tools

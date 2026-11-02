@@ -1,0 +1,165 @@
+name: images
+
+on:
+  pull_request:
+    paths:
+      - images/**
+      - .github/workflows/images.yaml
+  push:
+    branches:
+      - main
+    paths:
+      - images/**
+      - .github/workflows/images.yaml
+  workflow_dispatch:
+    inputs:
+      kubernetes_version:
+        description: Kubernetes version baked into the image (empty = build.sh default)
+
+permissions: {}
+
+concurrency:
+  group: images-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    permissions:
+      contents: read
+    outputs:
+      image-name: ${{ steps.build.outputs.image-name }}
+      kubernetes-version: ${{ steps.build.outputs.kubernetes-version }}
+    steps:
+      - name: Harden the runner (Audit all outbound calls)
+        uses: step-security/harden-runner@ccd8616d44fd3846e67624a50d5aad6d37bf2d25 # v2.22.1
+        with:
+          egress-policy: audit
+
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - uses: step-security/setup-uv@74a4e3db95d70115a82e33151924944cfac643cb # v10.2.0
+        with:
+          enable-cache: true
+          cache-dependency-glob: images/uv.lock
+
+      - name: Install build host packages
+        run: |
+          uv sync --locked --project images
+          sudo apt-get update
+          # shellcheck disable=SC2046 # one package per word
+          sudo apt-get install -y $(uv run --locked --project images bindep -b -f images/bindep.txt)
+
+      - name: Build image
+        id: build
+        run: images/build.sh
+        env:
+          # Empty unless set on a manual run; build.sh owns the default.
+          KUBERNETES_VERSION: ${{ inputs.kubernetes_version }}
+          OUTPUT_DIR: ${{ github.workspace }}/images/output
+          # 16 GB of RAM on public runners: building in tmpfs risks OOM.
+          DIB_NO_TMPFS: "1"
+          # Every CI build starts clean; nothing to reuse downloaded .debs for.
+          DIB_APT_LOCAL_CACHE: "0"
+
+      - name: Disk usage after build
+        if: ${{ always() }}
+        run: df -h /
+
+      # Values reach scripts through env, never ${{ }} inside run: — the
+      # image name is derived from the workflow_dispatch input.
+      - name: Check image contents
+        run: sudo images/check.sh "images/output/${IMAGE_NAME}.qcow2"
+        env:
+          IMAGE_NAME: ${{ steps.build.outputs.image-name }}
+
+      # Only needed by the publish job; other refs just build and check.
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        if: ${{ github.ref == 'refs/heads/main' }}
+        with:
+          name: ${{ steps.build.outputs.image-name }}-${{ github.run_id }}
+          path: |
+            images/output/${{ steps.build.outputs.image-name }}.qcow2
+            images/output/${{ steps.build.outputs.image-name }}.qcow2.sha256
+          if-no-files-found: error
+          retention-days: 7
+
+  # Separate job: the token that can write releases never shares a runner
+  # with the sudo-heavy image build. Main only: a manual run on another
+  # branch must not replace the published image with an unmerged one.
+  #
+  # Publishes to a single rolling release, "latest-images": one qcow2 per
+  # Kubernetes minor version, overwritten by every build from main.
+  publish:
+    runs-on: ubuntu-24.04
+    needs: build
+    if: ${{ github.ref == 'refs/heads/main' }}
+    permissions:
+      contents: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+      RELEASE_TAG: latest-images
+      IMAGE_NAME: ${{ needs.build.outputs.image-name }}
+      KUBERNETES_VERSION: ${{ needs.build.outputs.kubernetes-version }}
+    steps:
+      - name: Harden the runner (Audit all outbound calls)
+        uses: step-security/harden-runner@ccd8616d44fd3846e67624a50d5aad6d37bf2d25 # v2.22.1
+        with:
+          egress-policy: audit
+
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: ${{ needs.build.outputs.image-name }}-${{ github.run_id }}
+
+      - name: Verify checksum
+        run: sha256sum -c "${IMAGE_NAME}.qcow2.sha256"
+
+      # Release assets must be smaller than 2 GiB; fail clearly instead of
+      # halfway through the upload.
+      - name: Check release asset size
+        run: |
+          SIZE=$(stat -c %s "${IMAGE_NAME}.qcow2")
+          if [ "${SIZE}" -ge $((2 * 1024 * 1024 * 1024)) ]; then
+            echo "::error::${IMAGE_NAME}.qcow2 is ${SIZE} bytes, over the 2 GiB release asset limit"
+            exit 1
+          fi
+
+      # The tag points at the commit the published images were built from.
+      - name: Move the release tag to this commit
+        run: |
+          if gh api "repos/${GH_REPO}/git/ref/tags/${RELEASE_TAG}" > /dev/null 2>&1; then
+            gh api -X PATCH "repos/${GH_REPO}/git/refs/tags/${RELEASE_TAG}" \
+              -f sha="${GITHUB_SHA}" -F force=true > /dev/null
+          else
+            gh api -X POST "repos/${GH_REPO}/git/refs" \
+              -f ref="refs/tags/${RELEASE_TAG}" -f sha="${GITHUB_SHA}" > /dev/null
+          fi
+
+      - name: Upload to the release
+        run: |
+          NOTES="**For testing only.** CI-built node images for trying carrack out: replaced without notice on every build from main, no history, no support or update guarantees. For anything beyond testing, build your own images (images/README.md).
+
+          One image per Kubernetes minor version, each with a matching .qcow2.sha256. The tag points at the commit they were built from."
+          # Set on every run, so wording changes reach the release page.
+          if gh release view "${RELEASE_TAG}" > /dev/null 2>&1; then
+            gh release edit "${RELEASE_TAG}" --notes "${NOTES}"
+          else
+            gh release create "${RELEASE_TAG}" --verify-tag --latest=false \
+              --title "Latest images (testing only)" --notes "${NOTES}"
+          fi
+          # --clobber replaces the existing assets of the same name
+          # (delete, then upload: briefly unavailable during the upload).
+          gh release upload "${RELEASE_TAG}" --clobber \
+            "${IMAGE_NAME}.qcow2" "${IMAGE_NAME}.qcow2.sha256"
+          URL="${GITHUB_SERVER_URL}/${GH_REPO}/releases/download/${RELEASE_TAG}"
+          {
+            echo "### ${IMAGE_NAME}.qcow2"
+            echo
+            echo "- Kubernetes: \`${KUBERNETES_VERSION}\`"
+            echo "- Commit: \`${GITHUB_SHA}\`"
+            echo "- sha256: \`$(cut -d' ' -f1 "${IMAGE_NAME}.qcow2.sha256")\`"
+            echo "- Image: ${URL}/${IMAGE_NAME}.qcow2"
+            echo "- Checksum: ${URL}/${IMAGE_NAME}.qcow2.sha256"
+          } >> "${GITHUB_STEP_SUMMARY}"

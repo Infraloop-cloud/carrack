@@ -1,0 +1,45 @@
+#!/bin/bash
+# SPDX-License-Identifier: Apache-2.0
+#
+# Installs the NVIDIA-optimized Ubuntu kernel DIB_UBUNTU_NVIDIA_KERNEL next
+# to the kernel ubuntu-minimal installs, and holds it.
+#
+# An exact version, deliberately not the linux-image-nvidia-<series>
+# metapackage: that would pull a newer kernel on the next `apt upgrade`, and
+# anything keyed on the kernel version (e.g. the NVIDIA network-operator
+# kernel allowlist) then silently stops working on that node.
+#
+# Numbered 50- so it runs before the DKMS elements (OFED, NVIDIA driver,
+# ...): their DKMS postinst builds for every kernel that has headers
+# installed, so these headers must already be present.
+#
+# The ubuntu-minimal kernel stays installed as a fallback boot entry. GRUB
+# boots the highest version by default — confirm with `uname -r` on first
+# boot.
+
+if [ "${DIB_DEBUG_TRACE:-0}" -gt 0 ]; then
+    set -x
+fi
+set -eu
+set -o pipefail
+
+KERNEL="${DIB_UBUNTU_NVIDIA_KERNEL}"
+
+PACKAGES="linux-image-${KERNEL} linux-headers-${KERNEL}"
+if [ "${DIB_UBUNTU_NVIDIA_KERNEL_NVIDIA_FS}" = "1" ]; then
+    PACKAGES+=" linux-modules-nvidia-fs-${KERNEL}"
+fi
+
+# install-packages (DIB's dpkg element) installs non-interactively and keeps
+# existing conffiles; it doesn't refresh the package lists itself.
+apt-get update
+# shellcheck disable=SC2086
+install-packages ${PACKAGES}
+
+apt-mark hold "linux-image-${KERNEL}" "linux-headers-${KERNEL}"
+
+DEFAULT_KERNEL=$(find /lib/modules -mindepth 1 -maxdepth 1 -printf '%f\n' | sort -V | tail -n1)
+if [ "${DEFAULT_KERNEL}" != "${KERNEL}" ]; then
+    echo "WARNING: ubuntu-nvidia-kernel: ${KERNEL} is not the highest installed" \
+         "kernel (${DEFAULT_KERNEL}) — GRUB will boot ${DEFAULT_KERNEL} by default"
+fi
