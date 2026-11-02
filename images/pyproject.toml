@@ -1,0 +1,12 @@
+[project]
+name = "carrack-images"
+version = "0.0.0"
+description = "carrack node image build (diskimage-builder)"
+requires-python = ">=3.10"
+dependencies = [
+    "bindep>=2.13.0",
+    "diskimage-builder==3.42.0",
+]
+
+[tool.uv]
+package = false
