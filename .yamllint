@@ -1,0 +1,16 @@
+# SPDX-License-Identifier: Apache-2.0
+#
+# yamllint settings (.github/workflows/lint.yaml runs it with --strict).
+extends: default
+
+rules:
+  # Manifests and workflows are single documents; a leading "---" adds nothing.
+  document-start: disable
+  # Pinned image references, digests and URLs don't wrap.
+  line-length: disable
+  # GitHub Actions' "on:" key.
+  truthy:
+    check-keys: false
+  # "uses: owner/action@<sha> # vX.Y.Z" style pin comments.
+  comments:
+    min-spaces-from-content: 1
