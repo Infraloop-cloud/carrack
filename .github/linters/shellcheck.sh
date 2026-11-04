@@ -10,6 +10,7 @@ set -euo pipefail
 
 cd "$(git rev-parse --show-toplevel)"
 
+# shellcheck disable=SC2016 # $0 is awk's, not the shell's
 mapfile -t scripts < <(git ls-files -z | xargs -0 awk '
     FNR == 1 { if ($0 ~ /^#!.*[\/ ](ba)?sh([[:space:]]|$)/) print FILENAME; nextfile }
 ')

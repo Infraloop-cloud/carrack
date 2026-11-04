@@ -62,7 +62,7 @@ echo "--- GRUB default entry"
 echo "${GRUB_DEFAULT_LINUX}"
 echo "---"
 
-# shellcheck disable=SC2317 # called through check()
+# shellcheck disable=SC2317,SC2329 # called through check()
 package_status() {
     awk -v pkg="$1" '
         $0 == "Package: " pkg { found = 1; next }
@@ -71,12 +71,12 @@ package_status() {
     ' <<<"${DPKG_STATUS}"
 }
 
-# shellcheck disable=SC2317 # called through check()
+# shellcheck disable=SC2317,SC2329 # called through check()
 held() {
     package_status "$1" | grep -qx "Status: hold ok installed"
 }
 
-# shellcheck disable=SC2317 # called through check()
+# shellcheck disable=SC2317,SC2329 # called through check()
 installed() {
     package_status "$1" | grep -qE "^Status: (install|hold) ok installed$"
 }
