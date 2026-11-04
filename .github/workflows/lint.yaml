@@ -1,0 +1,76 @@
+name: lint
+
+# ShellCheck on every shell script, yamllint on every YAML file and
+# actionlint on the workflows (it also runs ShellCheck on their run: steps).
+# Every pull request: linting takes seconds and needs nothing from the
+# heavier image and cluster workflows.
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+
+permissions: {}
+
+concurrency:
+  group: lint-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  lint:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    # Pinned: the runner image's own linters change with every image update.
+    env:
+      SHELLCHECK_VERSION: v0.11.0
+      SHELLCHECK_SHA256: 8c3be12b05d5c177a04c29e3c78ce89ac86f1595681cab149b65b97c4e227198
+      ACTIONLINT_VERSION: 1.7.12
+      ACTIONLINT_SHA256: 8aca8db96f1b94770f1b0d72b6dddcb1ebb8123cb3712530b08cc387b349a3d8
+    steps:
+      - name: Harden the runner (Audit all outbound calls)
+        uses: step-security/harden-runner@ccd8616d44fd3846e67624a50d5aad6d37bf2d25 # v2.22.1
+        with:
+          egress-policy: audit
+
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      # yamllint comes from .github/linters/requirements.txt (hash-pinned).
+      - name: Install linters
+        id: install
+        run: |
+          bin="${RUNNER_TEMP}/linters/bin"
+          mkdir -p "${bin}"
+          cd "${RUNNER_TEMP}/linters"
+
+          curl -sfL --retry 3 -o shellcheck.tar.xz \
+            "https://github.com/koalaman/shellcheck/releases/download/${SHELLCHECK_VERSION}/shellcheck-${SHELLCHECK_VERSION}.linux.x86_64.tar.xz"
+          echo "${SHELLCHECK_SHA256}  shellcheck.tar.xz" | sha256sum -c -
+          tar -xJf shellcheck.tar.xz -C "${bin}" --strip-components=1 "shellcheck-${SHELLCHECK_VERSION}/shellcheck"
+
+          curl -sfL --retry 3 -o actionlint.tar.gz \
+            "https://github.com/rhysd/actionlint/releases/download/v${ACTIONLINT_VERSION}/actionlint_${ACTIONLINT_VERSION}_linux_amd64.tar.gz"
+          echo "${ACTIONLINT_SHA256}  actionlint.tar.gz" | sha256sum -c -
+          tar -xzf actionlint.tar.gz -C "${bin}" actionlint
+
+          python3 -m venv yamllint
+          yamllint/bin/pip install -q --require-hashes --no-deps --only-binary :all: \
+            -r "${GITHUB_WORKSPACE}/.github/linters/requirements.txt"
+          ln -s "${RUNNER_TEMP}/linters/yamllint/bin/yamllint" "${bin}/yamllint"
+
+          echo "${bin}" >> "${GITHUB_PATH}"
+
+      # Each linter runs even when an earlier one failed, so one push shows
+      # every finding.
+      - name: ShellCheck
+        if: ${{ !cancelled() && steps.install.outcome == 'success' }}
+        run: .github/linters/shellcheck.sh
+
+      - name: yamllint
+        if: ${{ !cancelled() && steps.install.outcome == 'success' }}
+        run: yamllint --strict --format github .
+
+      - name: actionlint
+        if: ${{ !cancelled() && steps.install.outcome == 'success' }}
+        run: actionlint -color
