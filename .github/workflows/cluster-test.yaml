@@ -1,0 +1,97 @@
+name: cluster-test
+
+on:
+  # run.sh also reads the image's default Kubernetes version and kernel.
+  pull_request:
+    paths:
+      - tests/cluster/**
+      - images/kubernetes-version
+      - images/elements/ubuntu-nvidia-kernel/environment.d/**
+      - .github/workflows/cluster-test.yaml
+  push:
+    branches:
+      - main
+    paths:
+      - tests/cluster/**
+      - images/kubernetes-version
+      - images/elements/ubuntu-nvidia-kernel/environment.d/**
+      - .github/workflows/cluster-test.yaml
+  workflow_dispatch:
+    inputs:
+      image-name:
+        description: Image from the latest-images release
+        default: ubuntu-24.04-nvidia-1-36
+      kubernetes-version:
+        description: Kubernetes version baked into the image (empty = images/build.sh default)
+        default: ""
+  workflow_call:
+    inputs:
+      image-artifact:
+        description: Name of a workflow artifact holding the image (default - latest-images release)
+        type: string
+        default: ""
+      kubernetes-version:
+        description: Kubernetes version baked into the image (empty = images/build.sh default)
+        type: string
+        default: ""
+
+permissions: {}
+
+jobs:
+  cluster:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 75
+    permissions:
+      contents: read
+    steps:
+      - name: Harden the runner (Audit all outbound calls)
+        uses: step-security/harden-runner@ccd8616d44fd3846e67624a50d5aad6d37bf2d25 # v2.22.1
+        with:
+          egress-policy: audit
+
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Install virtualization packages
+        run: |
+          test -e /dev/kvm
+          sudo apt-get update
+          sudo apt-get install -y libvirt-daemon-system qemu-system-x86 qemu-utils ovmf \
+            virtinst python3-libvirt python3-venv
+
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        if: ${{ inputs.image-artifact != '' }}
+        with:
+          name: ${{ inputs.image-artifact }}
+          path: ${{ runner.temp }}/image
+
+      - name: Download image from the latest-images release
+        if: ${{ inputs.image-artifact == '' }}
+        run: gh release download latest-images --repo "${GITHUB_REPOSITORY}" --dir "${RUNNER_TEMP}/image" --pattern "${IMAGE_NAME}.qcow2*"
+        env:
+          GH_TOKEN: ${{ github.token }}
+          IMAGE_NAME: ${{ inputs.image-name || 'ubuntu-24.04-nvidia-1-36' }}
+
+      - name: Verify image checksum
+        id: image
+        run: |
+          cd "${RUNNER_TEMP}/image"
+          images=(./*.qcow2)
+          [ "${#images[@]}" -eq 1 ] || { echo "expected exactly one .qcow2, found: ${images[*]}"; exit 1; }
+          sha256sum -c "${images[0]}.sha256"
+          echo "path=${RUNNER_TEMP}/image/${images[0]#./}" >> "${GITHUB_OUTPUT}"
+
+      - name: Run cluster test
+        run: tests/cluster/run.sh "${IMAGE_PATH}"
+        env:
+          IMAGE_PATH: ${{ steps.image.outputs.path }}
+          KUBERNETES_VERSION: ${{ inputs.kubernetes-version }}
+          # clusterctl reads provider releases from the GitHub API.
+          GITHUB_TOKEN: ${{ github.token }}
+
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        if: ${{ always() }}
+        with:
+          name: cluster-test-logs-${{ github.run_id }}-${{ github.run_attempt }}
+          path: tests/cluster/logs/
+          if-no-files-found: warn
+          retention-days: 7

@@ -18,7 +18,7 @@ and working sudo. Run as a normal user; DIB calls sudo itself where needed.
 uv sync --locked --project images
 sudo apt-get install -y $(uv run --locked --project images bindep -b -f images/bindep.txt)
 
-images/build.sh                              # Kubernetes 1.36.5
+images/build.sh                              # Kubernetes from images/kubernetes-version
 KUBERNETES_VERSION=1.36.4 images/build.sh    # another version
 
 sudo images/check.sh images/output/ubuntu-24.04-nvidia-1-36.qcow2
