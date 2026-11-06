@@ -1,0 +1,185 @@
+# SPDX-License-Identifier: Apache-2.0
+#
+# The emulated datacenter: a libvirt provisioning network, a UEFI VM per host
+# in capm3_hosts, sushy-tools as their Redfish BMCs and an HTTP server for the
+# image under test. Also the test's SSH key and the checks' configuration.
+- name: Set up the emulated datacenter
+  hosts: localhost
+  connection: local
+  gather_facts: true
+  gather_subset: [min]
+  tasks:
+    # command -v is a shell builtin.
+    - name: Check for the commands the test needs # noqa: command-instead-of-shell
+      ansible.builtin.shell: command -v {{ item }}
+      loop: [virsh, virt-install, qemu-img, iptables, docker, ssh, ssh-keygen, systemd-run]
+      changed_when: false
+
+    - name: Check for KVM and OVMF
+      ansible.builtin.stat:
+        path: "{{ item }}"
+      loop: [/dev/kvm, /usr/share/OVMF/OVMF_CODE_4M.fd, /usr/share/OVMF/OVMF_VARS_4M.fd]
+      register: carrack_test_paths
+      failed_when: not carrack_test_paths.stat.exists
+
+    # sushy-tools needs libvirt's Python bindings, which only come from the
+    # distribution (python3-libvirt).
+    - name: Check for python3-libvirt
+      ansible.builtin.command:
+        argv: [/usr/bin/python3, -c, import libvirt]
+      changed_when: false
+
+    - name: Check that docker is usable without sudo
+      ansible.builtin.command:
+        argv: [docker, info]
+      changed_when: false
+
+    - name: Create the state and log directories
+      ansible.builtin.file:
+        path: "{{ item }}"
+        state: directory
+        mode: "0700"
+      loop:
+        - "{{ carrack_test_state_dir }}"
+        - "{{ carrack_test_state_dir }}/ssh"
+        - "{{ carrack_test_log_dir }}"
+
+    - name: Create the test's SSH key
+      ansible.builtin.command:
+        argv: [ssh-keygen, -q, -t, ed25519, -N, "", -C, carrack-cluster-test, -f, "{{ carrack_test_ssh_key }}"]
+        creates: "{{ carrack_test_ssh_key }}"
+
+    # The nodes' sshd is hardened (capo-image-elements): one key per
+    # connection, as MaxAuthTries is 3. Their host keys change with every run.
+    - name: Write the SSH configuration for the nodes
+      ansible.builtin.copy:
+        dest: "{{ carrack_test_ssh_config }}"
+        mode: "0600"
+        content: |
+          Host {{ capm3_hosts | map(attribute='ip') | join(' ') }}
+            User {{ capm3_ssh_user }}
+            IdentityFile {{ carrack_test_ssh_key }}
+            IdentitiesOnly yes
+            StrictHostKeyChecking no
+            UserKnownHostsFile /dev/null
+            LogLevel ERROR
+            ConnectTimeout 10
+
+    - name: Write the checks' configuration
+      ansible.builtin.copy:
+        content: "{{ carrack_test_config | to_nice_json }}\n"
+        dest: "{{ carrack_test_state_dir }}/test-config.json"
+        mode: "0644"
+
+    - name: Read IP forwarding
+      ansible.builtin.slurp:
+        src: /proc/sys/net/ipv4/ip_forward
+      register: carrack_test_ip_forward
+
+    - name: Enable IP forwarding
+      ansible.builtin.command:
+        argv: [sysctl, -q, -w, net.ipv4.ip_forward=1]
+      become: true
+      when: carrack_test_ip_forward.content | b64decode | trim != '1'
+      changed_when: true
+
+    - name: Look for the provisioning network
+      ansible.builtin.command:
+        argv: [virsh, --connect, qemu:///system, net-info, "{{ carrack_test_net_name }}"]
+      become: true
+      register: carrack_test_net
+      failed_when: false
+      changed_when: false
+
+    - name: Write the provisioning network's definition
+      ansible.builtin.template:
+        src: templates/network.xml.j2
+        dest: "{{ carrack_test_state_dir }}/network.xml"
+        mode: "0644"
+
+    - name: Create the provisioning network
+      ansible.builtin.command:
+        argv: "{{ ['virsh', '--connect', 'qemu:///system'] + item }}"
+      loop:
+        - [net-define, "{{ carrack_test_state_dir }}/network.xml"]
+        - [net-start, "{{ carrack_test_net_name }}"]
+      become: true
+      when: carrack_test_net.rc != 0
+      changed_when: true
+
+    - name: Allow forwarding and NAT for the provisioning network
+      ansible.builtin.command:
+        argv: ["{{ carrack_test_dir }}/files/firewall.sh", add, "{{ carrack_test_subnet }}", "{{ carrack_test_bridge }}"]
+      become: true
+      changed_when: false
+
+    # Where sushy-tools keeps inserted virtual media (sushy.conf).
+    - name: Look for the virtual media pool
+      ansible.builtin.command:
+        argv: [virsh, --connect, qemu:///system, pool-info, "{{ carrack_test_vmedia_pool }}"]
+      become: true
+      register: carrack_test_pool
+      failed_when: false
+      changed_when: false
+
+    - name: Create the virtual media pool
+      ansible.builtin.command:
+        argv: "{{ ['virsh', '--connect', 'qemu:///system'] + item }}"
+      loop:
+        - [pool-define-as, "{{ carrack_test_vmedia_pool }}", dir, --target, "{{ carrack_test_vmedia_pool_dir }}"]
+        - [pool-build, "{{ carrack_test_vmedia_pool }}"]
+        - [pool-start, "{{ carrack_test_vmedia_pool }}"]
+      become: true
+      when: carrack_test_pool.rc != 0
+      changed_when: true
+
+    - name: Create the VMs
+      ansible.builtin.include_tasks: tasks/vm.yml
+      loop: "{{ capm3_hosts }}"
+      loop_control:
+        loop_var: vm
+        label: "{{ vm.name }}"
+
+    - name: Install sushy-tools
+      ansible.builtin.pip:
+        name: sushy-tools=={{ carrack_test_sushy_version }}
+        virtualenv: "{{ carrack_test_state_dir }}/sushy-venv"
+        virtualenv_command: /usr/bin/python3 -m venv
+        virtualenv_site_packages: true
+
+    # As root: sushy-tools manages libvirt domains and their virtual media
+    # files. Transient systemd units, stopped by teardown.yml; their logs are
+    # in the journal (logs.yml).
+    # The systemd module can't create transient units.
+    - name: Start sushy-tools and the image server # noqa: command-instead-of-module
+      ansible.builtin.shell: >-
+        systemctl is-active --quiet {{ item.unit }} && exit 0;
+        systemd-run --unit={{ item.unit }} --collect {{ item.options }} -- {{ item.command }} && echo started
+      loop:
+        - unit: carrack-sushy
+          options: ""
+          command: >-
+            {{ carrack_test_state_dir }}/sushy-venv/bin/sushy-emulator
+            --config {{ carrack_test_dir }}/sushy.conf
+            -i {{ carrack_test_host_ip }} -p {{ carrack_test_sushy_port }}
+        - unit: carrack-images
+          options: --uid={{ ansible_facts.user_id }}
+          command: >-
+            /usr/bin/python3 -m http.server {{ carrack_test_http_port }}
+            --bind {{ carrack_test_host_ip }} --directory {{ carrack_test_image | dirname }}
+      loop_control:
+        label: "{{ item.unit }}"
+      become: true
+      register: carrack_test_services
+      changed_when: "'started' in carrack_test_services.stdout"
+
+    - name: Wait for sushy-tools and the image server
+      ansible.builtin.uri:
+        url: "{{ item }}"
+      loop:
+        - "{{ carrack_test_redfish }}/"
+        - "{{ capm3_image_checksum_url }}"
+      register: carrack_test_up
+      retries: 30
+      delay: 1
+      until: carrack_test_up is succeeded

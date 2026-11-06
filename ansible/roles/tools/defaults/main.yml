@@ -1,0 +1,11 @@
+# SPDX-License-Identifier: Apache-2.0
+#
+# Pinned tool releases (linux-amd64), checked against these checksums.
+capm3_kind_version: v0.33.0
+capm3_kind_sha256: aee6151561422756b764a4ae28e7f44cda5af5a9eead3cc9985112b1de8d8e0d
+# Kubernetes 1.36, matching the bootstrap node and carrack's node images.
+capm3_kubectl_version: v1.36.4
+capm3_kubectl_sha256: 8b8f088da2dab964f853b38464033b1be15ede2839eca751482357c45abdd05a
+capm3_clusterctl_sha256: e56f397f55c6fdde6ee8c0fead4fb21270a50e05111180bf68c8ae6c82dfd917
+capm3_helm_version: v4.3.1
+capm3_helm_sha256: 0403a88ae20913d11b10a2467b50087721fea7581736da6b9d3992f5357fe54b

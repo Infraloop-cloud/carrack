@@ -1,0 +1,77 @@
+# SPDX-License-Identifier: Apache-2.0
+- name: Pull the Kube-OVN chart
+  ansible.builtin.command:
+    argv:
+      - "{{ capm3_helm }}"
+      - pull
+      - "{{ capm3_kube_ovn_chart }}"
+      - --version={{ capm3_kube_ovn_version }}
+      - --destination={{ capm3_downloads_dir }}
+    creates: "{{ capm3_downloads_dir }}/kube-ovn-v2-{{ capm3_kube_ovn_version }}.tgz"
+  environment: "{{ capm3_tool_environment }}"
+  register: capm3_kube_ovn_pull
+  retries: 3
+  delay: 10
+  until: capm3_kube_ovn_pull is succeeded
+
+- name: Check the Kube-OVN chart
+  ansible.builtin.stat:
+    path: "{{ capm3_downloads_dir }}/kube-ovn-v2-{{ capm3_kube_ovn_version }}.tgz"
+    checksum_algorithm: sha256
+  register: capm3_kube_ovn_chart_file
+  failed_when: capm3_kube_ovn_chart_file.stat.checksum | default('') != capm3_kube_ovn_chart_sha256
+
+- name: Look for the Kube-OVN release
+  ansible.builtin.command:
+    argv:
+      - "{{ capm3_helm }}"
+      - status
+      - kube-ovn
+      - --namespace=kube-system
+      - --kubeconfig={{ capm3_cluster_kubeconfig }}
+  environment: "{{ capm3_tool_environment }}"
+  register: capm3_kube_ovn_release
+  failed_when: false
+  changed_when: false
+
+- name: Install Kube-OVN
+  ansible.builtin.command:
+    argv:
+      - "{{ capm3_helm }}"
+      - install
+      - kube-ovn
+      - "{{ capm3_downloads_dir }}/kube-ovn-v2-{{ capm3_kube_ovn_version }}.tgz"
+      - --namespace=kube-system
+      - --kubeconfig={{ capm3_cluster_kubeconfig }}
+  environment: "{{ capm3_tool_environment }}"
+  when: capm3_kube_ovn_release.rc != 0
+  changed_when: true
+
+# In the order they come up. ovs-ovn loads the node kernel's openvswitch
+# module, on every node.
+- name: Wait for Kube-OVN
+  ansible.builtin.command:
+    argv:
+      - "{{ capm3_kubectl }}"
+      - --kubeconfig={{ capm3_cluster_kubeconfig }}
+      - --namespace=kube-system
+      - rollout
+      - status
+      - "{{ item }}"
+      - --timeout=600s
+  loop:
+    - deployment/ovn-central
+    - daemonset/ovs-ovn
+    - deployment/kube-ovn-controller
+    - daemonset/kube-ovn-cni
+  changed_when: false
+
+- name: Wait for the nodes and cluster DNS
+  ansible.builtin.command:
+    argv: "{{ [capm3_kubectl, '--kubeconfig', capm3_cluster_kubeconfig] + item }}"
+  loop:
+    - [wait, --for=condition=Ready, node, --all, --timeout=300s]
+    - [-n, kube-system, rollout, status, deployment/coredns, --timeout=300s]
+  loop_control:
+    label: "{{ item | join(' ') }}"
+  changed_when: false

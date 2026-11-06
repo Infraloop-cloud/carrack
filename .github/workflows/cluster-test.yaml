@@ -1,10 +1,12 @@
 name: cluster-test
 
 on:
-  # run.sh also reads the image's default Kubernetes version and kernel.
+  # The test runs the collection in ansible/, and reads the image's default
+  # Kubernetes version and kernel.
   pull_request:
     paths:
       - tests/cluster/**
+      - ansible/**
       - images/kubernetes-version
       - images/elements/ubuntu-nvidia-kernel/environment.d/**
       - .github/workflows/cluster-test.yaml
@@ -13,6 +15,7 @@ on:
       - main
     paths:
       - tests/cluster/**
+      - ansible/**
       - images/kubernetes-version
       - images/elements/ubuntu-nvidia-kernel/environment.d/**
       - .github/workflows/cluster-test.yaml

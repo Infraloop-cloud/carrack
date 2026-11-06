@@ -1,0 +1,8 @@
+# SPDX-License-Identifier: Apache-2.0
+#
+# Defaults for the fields of each host in capm3_hosts (see the README).
+capm3_host_boot_mode: UEFI
+
+# Inspection: registering the host with Ironic, then booting the agent on it
+# to inventory its hardware.
+capm3_host_inspection_timeout: 1800
