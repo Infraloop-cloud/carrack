@@ -1,0 +1,11 @@
+# SPDX-License-Identifier: Apache-2.0
+#
+# Collections for the cluster test, installed by run.sh from this directory.
+collections:
+  # The collection under test, from this repository.
+  - name: ../../ansible
+    type: dir
+  # Pinned by commit: v6.6.0.
+  - name: https://github.com/ansible-collections/kubernetes.core.git
+    type: git
+    version: e91b3171ea9bb55f2fc0c3fc7ab06fb571f05ddc

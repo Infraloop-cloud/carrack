@@ -1,0 +1,61 @@
+# SPDX-License-Identifier: Apache-2.0
+#
+# One host (vm, from capm3_hosts): an empty disk, which Ironic writes the image
+# onto, and a UEFI VM, defined but not started: Ironic powers it on through
+# Redfish.
+- name: Look for VM {{ vm.name }}
+  ansible.builtin.command:
+    argv: [virsh, --connect, qemu:///system, dominfo, "{{ vm.name }}"]
+  become: true
+  register: carrack_test_vm_info
+  failed_when: false
+  changed_when: false
+
+- name: Create and define VM {{ vm.name }}
+  when: carrack_test_vm_info.rc != 0
+  become: true
+  block:
+    - name: Create the disk of {{ vm.name }}
+      ansible.builtin.command:
+        argv:
+          - qemu-img
+          - create
+          - -q
+          - -f
+          - qcow2
+          - /var/lib/libvirt/images/{{ vm.name }}.qcow2
+          - "{{ carrack_test_node_disk_gb }}G"
+        creates: /var/lib/libvirt/images/{{ vm.name }}.qcow2
+
+    - name: Describe VM {{ vm.name }}
+      ansible.builtin.command:
+        argv:
+          - virt-install
+          - --connect=qemu:///system
+          - --print-xml
+          - --import
+          - --name={{ vm.name }}
+          - --uuid={{ vm.uuid }}
+          - --memory={{ carrack_test_node_memory_mb }}
+          - --vcpus={{ vm.vcpus }}
+          - --cpu=host-passthrough
+          - --osinfo=ubuntu24.04
+          - --boot=loader=/usr/share/OVMF/OVMF_CODE_4M.fd,loader.readonly=yes,loader.type=pflash,nvram.template=/usr/share/OVMF/OVMF_VARS_4M.fd
+          - --disk=path=/var/lib/libvirt/images/{{ vm.name }}.qcow2,format=qcow2,bus=virtio
+          - --network=network={{ carrack_test_net_name }},mac={{ vm.boot_mac }},model=virtio
+          - --serial=file,path=/var/log/libvirt/qemu/{{ vm.name }}-serial.log
+          - --graphics=none
+      register: carrack_test_vm_xml
+      changed_when: false
+
+    - name: Write the definition of {{ vm.name }}
+      ansible.builtin.copy:
+        content: "{{ carrack_test_vm_xml.stdout }}"
+        dest: "{{ carrack_test_state_dir }}/{{ vm.name }}.xml"
+        mode: "0644"
+      become: false
+
+    - name: Define VM {{ vm.name }}
+      ansible.builtin.command:
+        argv: [virsh, --connect, qemu:///system, define, "{{ carrack_test_state_dir }}/{{ vm.name }}.xml"]
+      changed_when: true

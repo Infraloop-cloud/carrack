@@ -1,0 +1,140 @@
+# SPDX-License-Identifier: Apache-2.0
+- name: List installed Cluster API providers
+  ansible.builtin.command:
+    argv:
+      - "{{ capm3_kubectl }}"
+      - --kubeconfig={{ capm3_bootstrap_kubeconfig }}
+      - get
+      - providers.clusterctl.cluster.x-k8s.io
+      - --all-namespaces
+      - --output=name
+  register: capm3_providers
+  # Before clusterctl init: "the server doesn't have a resource type".
+  failed_when:
+    - capm3_providers.rc != 0
+    - capm3_providers.stderr is not search('have a resource type')
+  changed_when: false
+
+# Also installs cert-manager, which the Metal3 webhooks need. clusterctl
+# reads provider releases from the GitHub API: set GITHUB_TOKEN to avoid its
+# rate limits.
+- name: Install Cluster API, CAPM3 and IPAM
+  ansible.builtin.command:
+    argv:
+      - "{{ capm3_clusterctl }}"
+      - init
+      - --kubeconfig={{ capm3_bootstrap_kubeconfig }}
+      - --core=cluster-api:{{ capm3_capi_version }}
+      - --bootstrap=kubeadm:{{ capm3_capi_version }}
+      - --control-plane=kubeadm:{{ capm3_capi_version }}
+      - --infrastructure=metal3:{{ capm3_infrastructure_version }}
+      - --ipam=metal3:{{ capm3_ipam_version }}
+      - --wait-providers
+      - --wait-provider-timeout=600
+  environment: "{{ capm3_tool_environment }}"
+  when: capm3_providers.stdout_lines | length == 0
+  changed_when: true
+
+- name: Download ironic-standalone-operator
+  ansible.builtin.get_url:
+    url: https://github.com/metal3-io/ironic-standalone-operator/releases/download/{{ capm3_irso_version }}/install.yaml
+    dest: "{{ capm3_downloads_dir }}/irso-{{ capm3_irso_version }}.yaml"
+    checksum: "sha256:{{ capm3_irso_manifest_sha256 }}"
+    mode: "0644"
+
+- name: Install ironic-standalone-operator
+  kubernetes.core.k8s:
+    kubeconfig: "{{ capm3_bootstrap_kubeconfig }}"
+    src: "{{ capm3_downloads_dir }}/irso-{{ capm3_irso_version }}.yaml"
+    apply: true
+    server_side_apply:
+      field_manager: carrack-capm3
+
+- name: Wait for ironic-standalone-operator
+  ansible.builtin.command:
+    argv:
+      - "{{ capm3_kubectl }}"
+      - --kubeconfig={{ capm3_bootstrap_kubeconfig }}
+      - --namespace=ironic-standalone-operator-system
+      - wait
+      - deployment
+      - --all
+      - --for=condition=Available
+      - --timeout=300s
+  changed_when: false
+
+- name: Create the Bare Metal Operator's namespace
+  kubernetes.core.k8s:
+    kubeconfig: "{{ capm3_bootstrap_kubeconfig }}"
+    kind: Namespace
+    name: "{{ capm3_bmo_namespace }}"
+
+# The operator's webhook may take a moment to answer after it is available.
+- name: Create the Ironic resource
+  kubernetes.core.k8s:
+    kubeconfig: "{{ capm3_bootstrap_kubeconfig }}"
+    definition: "{{ lookup('ansible.builtin.template', 'ironic.yaml.j2') | from_yaml }}"
+  register: capm3_ironic
+  retries: 30
+  delay: 5
+  until: capm3_ironic is succeeded
+
+# Includes downloading the agent ramdisk.
+- name: Wait for Ironic
+  ansible.builtin.command:
+    argv:
+      - "{{ capm3_kubectl }}"
+      - --kubeconfig={{ capm3_bootstrap_kubeconfig }}
+      - --namespace={{ capm3_bmo_namespace }}
+      - wait
+      - ironic/ironic
+      - --for=condition=Ready
+      - --timeout=900s
+  changed_when: false
+
+- name: Check that Ironic's API answers on its published address
+  ansible.builtin.uri:
+    url: http://{{ capm3_ironic_ip }}:{{ capm3_ironic_api_port }}/
+  register: capm3_ironic_api
+  retries: 30
+  delay: 2
+  until: capm3_ironic_api is succeeded
+
+- name: Create the Bare Metal Operator's kustomization directory
+  ansible.builtin.file:
+    path: "{{ capm3_work_dir }}/bmo"
+    state: directory
+    mode: "0700"
+
+- name: Write the Bare Metal Operator's kustomization
+  ansible.builtin.template:
+    src: bmo-kustomization.yaml.j2
+    dest: "{{ capm3_work_dir }}/bmo/kustomization.yaml"
+    mode: "0644"
+
+# kubectl builds the kustomization, fetching BMO's manifests from GitHub.
+- name: Install the Bare Metal Operator
+  ansible.builtin.command:
+    argv:
+      - "{{ capm3_kubectl }}"
+      - --kubeconfig={{ capm3_bootstrap_kubeconfig }}
+      - apply
+      - --kustomize={{ capm3_work_dir }}/bmo
+  register: capm3_bmo
+  retries: 3
+  delay: 10
+  until: capm3_bmo is succeeded
+  changed_when: capm3_bmo.stdout_lines | reject('search', ' unchanged$') | list | length > 0
+
+- name: Wait for the Bare Metal Operator
+  ansible.builtin.command:
+    argv:
+      - "{{ capm3_kubectl }}"
+      - --kubeconfig={{ capm3_bootstrap_kubeconfig }}
+      - --namespace={{ capm3_bmo_namespace }}
+      - wait
+      - deployment
+      - --all
+      - --for=condition=Available
+      - --timeout=300s
+  changed_when: false

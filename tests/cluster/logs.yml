@@ -1,0 +1,86 @@
+# SPDX-License-Identifier: Apache-2.0
+#
+# Collects logs and state into carrack_test_log_dir, after the test passed or
+# failed. Every command may fail: whatever exists gets collected.
+- name: Collect the cluster test's logs
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  vars:
+    carrack_test_kubectl: "{{ capm3_work_dir }}/bin/kubectl"
+    # <file in the log directory>: <shell command>
+    carrack_test_logs:
+      network.xml: sudo virsh --connect qemu:///system net-dumpxml {{ carrack_test_net_name }}
+      sushy.log: sudo journalctl --no-pager --unit=carrack-sushy
+      images.log: sudo journalctl --no-pager --unit=carrack-images
+      bootstrap-get.txt: >-
+        {{ carrack_test_kubectl }} --kubeconfig={{ capm3_bootstrap_kubeconfig }} get nodes,pods
+        --all-namespaces --output=wide
+      metal3.yaml: >-
+        {{ carrack_test_kubectl }} --kubeconfig={{ capm3_bootstrap_kubeconfig }} get ironic,baremetalhosts
+        --all-namespaces --output=yaml
+      metal3-pods.yaml: >-
+        {{ carrack_test_kubectl }} --kubeconfig={{ capm3_bootstrap_kubeconfig }}
+        --namespace=baremetal-operator-system get pods --output=yaml
+      capi.yaml: >-
+        {{ carrack_test_kubectl }} --kubeconfig={{ capm3_bootstrap_kubeconfig }}
+        get clusters,kubeadmcontrolplanes,machinedeployments,machines,metal3clusters,metal3machines
+        --all-namespaces --output=yaml
+      dns.txt: >-
+        docker exec {{ capm3_bootstrap_name }}-control-plane cat /etc/resolv.conf;
+        {{ carrack_test_kubectl }} --kubeconfig={{ capm3_bootstrap_kubeconfig }}
+        --namespace=kube-system get configmap coredns --output=jsonpath={.data.Corefile}
+      cluster-get.txt: >-
+        {{ carrack_test_kubectl }} --kubeconfig={{ capm3_cluster_kubeconfig }} get nodes,pods
+        --all-namespaces --output=wide --request-timeout=20s
+  tasks:
+    - name: Create the log directory
+      ansible.builtin.file:
+        path: "{{ carrack_test_log_dir }}"
+        state: directory
+        mode: "0755"
+
+    # First, and also on the console: with a full disk, the files below come
+    # out empty.
+    - name: Show disk usage
+      ansible.builtin.shell: >-
+        set -o pipefail;
+        { df -h / /var/lib/libvirt/images {{ carrack_test_state_dir }};
+        sudo du -sh /var/lib/libvirt/images /var/lib/docker {{ carrack_test_state_dir }}; }
+        2>&1 | tee {{ carrack_test_log_dir }}/disk.txt
+      args:
+        executable: /bin/bash
+      register: carrack_test_disk
+      failed_when: false
+      changed_when: false
+
+    - name: Print disk usage
+      ansible.builtin.debug:
+        var: carrack_test_disk.stdout_lines
+
+    - name: Collect the VMs' definitions and serial logs
+      ansible.builtin.shell: >-
+        sudo virsh --connect qemu:///system dumpxml {{ item }} > {{ carrack_test_log_dir }}/{{ item }}.xml 2>&1;
+        sudo cat /var/log/libvirt/qemu/{{ item }}-serial.log > {{ carrack_test_log_dir }}/{{ item }}-serial.log 2>&1
+      loop: "{{ capm3_hosts | map(attribute='name') | list }}"
+      failed_when: false
+      changed_when: false
+
+    - name: Collect state and service logs
+      ansible.builtin.shell: "{ {{ item.value }}; } > {{ carrack_test_log_dir }}/{{ item.key }} 2>&1"
+      loop: "{{ carrack_test_logs | dict2items }}"
+      loop_control:
+        label: "{{ item.key }}"
+      failed_when: false
+      changed_when: false
+
+    - name: Export the bootstrap cluster's logs
+      ansible.builtin.command:
+        argv:
+          - "{{ capm3_work_dir }}/bin/kind"
+          - export
+          - logs
+          - "{{ carrack_test_log_dir }}/kind"
+          - --name={{ capm3_bootstrap_name }}
+      failed_when: false
+      changed_when: false

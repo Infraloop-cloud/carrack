@@ -1,0 +1,26 @@
+# SPDX-License-Identifier: Apache-2.0
+#
+# The cluster. Required: capm3_kubernetes_version (the one baked into the
+# image, e.g. 1.36.5), capm3_image_url and capm3_image_checksum_url (a
+# carrack node image and its .sha256, served over HTTP(S) to the hosts) and
+# capm3_control_plane_endpoint (the control-plane host's address).
+capm3_kubernetes_version: ""
+capm3_image_url: ""
+capm3_image_checksum_url: ""
+capm3_image_checksum_type: sha256
+capm3_image_format: qcow2
+capm3_control_plane_endpoint: ""
+
+# Kube-OVN's chart defaults (the cni role installs it with them).
+capm3_pod_cidr: 10.16.0.0/16
+capm3_service_cidr: 10.96.0.0/12
+
+# A user created on every node, with passwordless sudo, for these SSH
+# public keys. None: no user.
+capm3_ssh_user: carrack
+capm3_ssh_authorized_keys: []
+
+# Writing the image and booting it, per host.
+capm3_provision_timeout: 1800
+# kubeadm: initialising the control plane, then the workers joining.
+capm3_machine_timeout: 1200

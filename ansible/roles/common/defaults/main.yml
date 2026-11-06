@@ -1,0 +1,57 @@
+# SPDX-License-Identifier: Apache-2.0
+#
+# Settings shared by all of the collection's roles (each depends on this one).
+
+# Where the collection keeps its tools, rendered manifests and kubeconfigs.
+capm3_work_dir: "{{ lookup('ansible.builtin.env', 'HOME') }}/.carrack"
+capm3_bin_dir: "{{ capm3_work_dir }}/bin"
+capm3_downloads_dir: "{{ capm3_work_dir }}/downloads"
+
+# The temporary kind cluster that runs Metal3 and creates the cluster.
+capm3_bootstrap_name: carrack-bootstrap
+capm3_bootstrap_kubeconfig: "{{ capm3_work_dir }}/bootstrap.kubeconfig"
+
+# The cluster being deployed, its namespace in the bootstrap cluster (also the
+# BareMetalHosts') and where its admin kubeconfig is saved.
+capm3_cluster_name: carrack
+capm3_namespace: carrack
+capm3_cluster_kubeconfig: "{{ capm3_work_dir }}/{{ capm3_cluster_name }}.kubeconfig"
+
+# The machines, as BareMetalHosts. Every host becomes a node of the cluster;
+# see the README for the fields.
+capm3_hosts: []
+# Selects hosts for the control plane and the workers (role: control-plane
+# or worker).
+capm3_host_role_label: carrack.infraloop.cloud/role
+# What Ironic wipes before a host is used again: metadata (partition tables)
+# or disabled. Per host: automated_cleaning_mode.
+capm3_automated_cleaning_mode: metadata
+# Optional: a shell command that detects host failures the BareMetalHost
+# doesn't show, run while waiting on each host (see the baremetalhost_wait
+# module's abort_command).
+capm3_host_wait_abort_command: ""
+
+# Ironic runs on the bootstrap cluster's node with host networking. Its API
+# and image server are published on this address of the machine running the
+# playbook, which the hosts and their BMCs must reach. Required.
+capm3_ironic_ip: ""
+capm3_ironic_api_port: 6385
+capm3_ironic_http_port: 6180
+# Fixed by BMO's manifests; not a setting.
+capm3_bmo_namespace: baremetal-operator-system
+
+# Cluster API (also clusterctl's version).
+capm3_capi_version: v1.14.3
+
+# Tools, installed into capm3_bin_dir by the tools role.
+capm3_kind: "{{ capm3_bin_dir }}/kind"
+capm3_kubectl: "{{ capm3_bin_dir }}/kubectl"
+capm3_clusterctl: "{{ capm3_bin_dir }}/clusterctl"
+capm3_helm: "{{ capm3_bin_dir }}/helm"
+# clusterctl and helm keep their configuration and caches here, not in the
+# user's home.
+capm3_tool_environment:
+  XDG_CONFIG_HOME: "{{ capm3_work_dir }}/config"
+  HELM_CONFIG_HOME: "{{ capm3_work_dir }}/helm/config"
+  HELM_CACHE_HOME: "{{ capm3_work_dir }}/helm/cache"
+  HELM_DATA_HOME: "{{ capm3_work_dir }}/helm/data"

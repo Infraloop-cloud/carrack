@@ -1,0 +1,28 @@
+# SPDX-License-Identifier: Apache-2.0
+#
+# Deletes the bootstrap cluster. Run it once the cluster no longer needs it,
+# or to start over.
+- name: Check for kind
+  ansible.builtin.stat:
+    path: "{{ capm3_kind }}"
+  register: capm3_kind_binary
+
+- name: List kind clusters
+  ansible.builtin.command:
+    argv: ["{{ capm3_kind }}", get, clusters]
+  register: capm3_kind_clusters
+  changed_when: false
+  when: capm3_kind_binary.stat.exists
+
+- name: Delete the bootstrap cluster
+  ansible.builtin.command:
+    argv: ["{{ capm3_kind }}", delete, cluster, "--name={{ capm3_bootstrap_name }}"]
+  when:
+    - capm3_kind_binary.stat.exists
+    - capm3_bootstrap_name in capm3_kind_clusters.stdout_lines
+  changed_when: true
+
+- name: Remove the bootstrap kubeconfig
+  ansible.builtin.file:
+    path: "{{ capm3_bootstrap_kubeconfig }}"
+    state: absent
