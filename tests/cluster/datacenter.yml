@@ -9,7 +9,8 @@
   gather_facts: true
   gather_subset: [min]
   tasks:
-    - name: Check for the commands the test needs
+    # command -v is a shell builtin.
+    - name: Check for the commands the test needs # noqa: command-instead-of-shell
       ansible.builtin.shell: command -v {{ item }}
       loop: [virsh, virt-install, qemu-img, iptables, docker, ssh, ssh-keygen, systemd-run]
       changed_when: false
@@ -149,7 +150,8 @@
     # As root: sushy-tools manages libvirt domains and their virtual media
     # files. Transient systemd units, stopped by teardown.yml; their logs are
     # in the journal (logs.yml).
-    - name: Start sushy-tools and the image server
+    # The systemd module can't create transient units.
+    - name: Start sushy-tools and the image server # noqa: command-instead-of-module
       ansible.builtin.shell: >-
         systemctl is-active --quiet {{ item.unit }} && exit 0;
         systemd-run --unit={{ item.unit }} --collect {{ item.options }} -- {{ item.command }} && echo started
