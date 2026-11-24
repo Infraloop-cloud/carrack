@@ -1,0 +1,71 @@
+# SPDX-License-Identifier: Apache-2.0
+- name: Check the Ironic address
+  ansible.builtin.assert:
+    that: capm3_ironic_ip | length > 0
+    fail_msg: Set capm3_ironic_ip to this machine's address on the hosts' provisioning network.
+    quiet: true
+
+- name: List kind clusters
+  ansible.builtin.command:
+    argv: ["{{ capm3_kind }}", get, clusters]
+  register: capm3_kind_clusters
+  changed_when: false
+
+- name: Write the kind configuration
+  ansible.builtin.template:
+    src: kind-config.yaml.j2
+    dest: "{{ capm3_work_dir }}/bootstrap-kind.yaml"
+    mode: "0644"
+
+- name: Create the bootstrap cluster
+  ansible.builtin.command:
+    argv:
+      - "{{ capm3_kind }}"
+      - create
+      - cluster
+      - --name={{ capm3_bootstrap_name }}
+      - --image={{ capm3_bootstrap_node_image }}
+      - --config={{ capm3_work_dir }}/bootstrap-kind.yaml
+      - --kubeconfig={{ capm3_bootstrap_kubeconfig }}
+      - --wait=5m
+  when: capm3_bootstrap_name not in capm3_kind_clusters.stdout_lines
+  changed_when: true
+
+- name: Save the bootstrap cluster's kubeconfig
+  ansible.builtin.command:
+    argv:
+      - "{{ capm3_kind }}"
+      - export
+      - kubeconfig
+      - --name={{ capm3_bootstrap_name }}
+      - --kubeconfig={{ capm3_bootstrap_kubeconfig }}
+  when: capm3_bootstrap_name in capm3_kind_clusters.stdout_lines
+  changed_when: false
+
+# kubelet re-reads the file for every new pod; /etc/resolv.conf is a bind
+# mount, so it is rewritten in place.
+- name: Drop the host's search domains from the bootstrap node
+  ansible.builtin.command:
+    argv:
+      - docker
+      - exec
+      - "{{ capm3_bootstrap_name }}-control-plane"
+      - sh
+      - -c
+      - >-
+        grep -q '^search ' /etc/resolv.conf || exit 0;
+        grep -v '^search ' /etc/resolv.conf > /tmp/resolv.conf &&
+        cat /tmp/resolv.conf > /etc/resolv.conf && echo dropped
+  register: capm3_search_domains
+  changed_when: "'dropped' in capm3_search_domains.stdout"
+  when: capm3_bootstrap_drop_search_domains | bool
+
+- name: Wait for the bootstrap cluster
+  ansible.builtin.command:
+    argv: "{{ [capm3_kubectl, '--kubeconfig', capm3_bootstrap_kubeconfig] + item }}"
+  loop:
+    - [wait, --for=condition=Ready, node, --all, --timeout=300s]
+    - [-n, kube-system, rollout, status, deployment/coredns, --timeout=300s]
+  loop_control:
+    label: "{{ item | join(' ') }}"
+  changed_when: false

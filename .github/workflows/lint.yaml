@@ -1,7 +1,8 @@
 name: lint
 
-# ShellCheck on every shell script, yamllint on every YAML file and
-# actionlint on the workflows (it also runs ShellCheck on their run: steps).
+# ShellCheck on every shell script, yamllint on every YAML file, actionlint
+# on the workflows (it also runs ShellCheck on their run: steps) and
+# ansible-lint on the collection and the cluster test's playbooks.
 # Every pull request: linting takes seconds and needs nothing from the
 # heavier image and cluster workflows.
 on:
@@ -36,7 +37,8 @@ jobs:
 
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
-      # yamllint comes from .github/linters/requirements.txt (hash-pinned).
+      # yamllint and ansible-lint come from .github/linters/requirements.txt
+      # (hash-pinned).
       - name: Install linters
         id: install
         run: |
@@ -54,10 +56,17 @@ jobs:
           echo "${ACTIONLINT_SHA256}  actionlint.tar.gz" | sha256sum -c -
           tar -xzf actionlint.tar.gz -C "${bin}" actionlint
 
-          python3 -m venv yamllint
-          yamllint/bin/pip install -q --require-hashes --no-deps --only-binary :all: \
+          python3 -m venv venv
+          venv/bin/pip install -q --require-hashes --no-deps --only-binary :all: \
             -r "${GITHUB_WORKSPACE}/.github/linters/requirements.txt"
-          ln -s "${RUNNER_TEMP}/linters/yamllint/bin/yamllint" "${bin}/yamllint"
+          for tool in yamllint ansible-lint ansible-galaxy; do
+            ln -s "${RUNNER_TEMP}/linters/venv/bin/${tool}" "${bin}/${tool}"
+          done
+
+          # ansible-lint resolves modules and roles from the cluster test's
+          # collections, including the one in ansible/.
+          cd "${GITHUB_WORKSPACE}/tests/cluster"
+          "${bin}/ansible-galaxy" collection install -r requirements.yml -p "${RUNNER_TEMP}/linters/collections"
 
           echo "${bin}" >> "${GITHUB_PATH}"
 
@@ -74,3 +83,9 @@ jobs:
       - name: actionlint
         if: ${{ !cancelled() && steps.install.outcome == 'success' }}
         run: actionlint -color
+
+      - name: ansible-lint
+        if: ${{ !cancelled() && steps.install.outcome == 'success' }}
+        run: ansible-lint --offline
+        env:
+          ANSIBLE_COLLECTIONS_PATH: ${{ runner.temp }}/linters/collections

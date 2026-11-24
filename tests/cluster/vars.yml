@@ -1,0 +1,127 @@
+# SPDX-License-Identifier: Apache-2.0
+#
+# The cluster test's settings, for its own playbooks (the emulated
+# datacenter, logs and teardown) and the collection's deploy playbook. run.sh
+# passes this file with -e, plus:
+#   carrack_test_dir                 this directory
+#   carrack_test_state_dir           where the test keeps its state
+#   carrack_test_log_dir             where logs go
+#   carrack_test_image               the image under test (.qcow2, .sha256 next to it)
+#   carrack_test_kubernetes_version  the image's Kubernetes version
+#   carrack_test_kernel              the image's kernel release
+#   carrack_test_nvidia_fs           1 if the image has the nvidia-fs module
+
+# --- The emulated datacenter (datacenter.yml) ---------------------------------
+
+# Provisioning network. The host's address on it is where sushy-tools (the
+# BMCs), the image server and (published from kind) Ironic listen.
+carrack_test_net_name: carrack-prov
+carrack_test_bridge: carrackprov0
+carrack_test_subnet: 192.168.150.0/24
+carrack_test_host_ip: 192.168.150.1
+
+# sushy-tools emulates a Redfish BMC for each VM, with virtual media.
+carrack_test_sushy_version: 2.2.0
+carrack_test_sushy_port: 8000
+carrack_test_redfish: http://{{ carrack_test_host_ip }}:{{ carrack_test_sushy_port }}/redfish/v1
+carrack_test_vmedia_pool: carrack-vmedia # also in sushy.conf
+carrack_test_vmedia_pool_dir: /var/lib/libvirt/images/{{ carrack_test_vmedia_pool }}
+
+# Serves the image under test to the hosts.
+carrack_test_http_port: 8080
+
+# The Ironic agent runs from RAM and downloads the qcow2 (about 1.1 GB) into
+# its in-memory /tmp before writing it to disk: 4 GiB runs out of space
+# there. Two 6 GiB VMs and kind fit the 16 GB runner because the hosts are
+# provisioned one after the other.
+carrack_test_node_memory_mb: 6144
+carrack_test_node_disk_gb: 20
+
+# testinfra logs into the nodes with a key made for each run.
+carrack_test_ssh_key: "{{ carrack_test_state_dir }}/ssh/id_ed25519"
+carrack_test_ssh_config: "{{ carrack_test_state_dir }}/ssh/config"
+
+# Test pods.
+carrack_test_curl_image: quay.io/curl/curl:8.22.0@sha256:58adaa4e8dca9c988bae2aba4ab3434a0bb2da16bbe3f92dec39ec7785166777
+# Ironic downloads its agent ramdisk from here.
+carrack_test_external_url: https://tarballs.opendev.org/
+
+# --- The collection (carrack.capm3.deploy) ----------------------------------
+
+capm3_work_dir: "{{ carrack_test_state_dir }}/capm3"
+# The collection's defaults, set here for the checks and teardown.
+capm3_bootstrap_name: carrack-bootstrap
+capm3_bootstrap_kubeconfig: "{{ capm3_work_dir }}/bootstrap.kubeconfig"
+capm3_cluster_name: carrack
+capm3_namespace: carrack
+capm3_cluster_kubeconfig: "{{ capm3_work_dir }}/{{ capm3_cluster_name }}.kubeconfig"
+capm3_ssh_user: carrack
+capm3_ironic_ip: "{{ carrack_test_host_ip }}"
+capm3_ironic_extra_kernel_params: console=ttyS0
+capm3_kubernetes_version: "{{ carrack_test_kubernetes_version }}"
+capm3_image_url: http://{{ carrack_test_host_ip }}:{{ carrack_test_http_port }}/{{ carrack_test_image | basename }}
+capm3_image_checksum_url: "{{ capm3_image_url }}.sha256"
+capm3_control_plane_endpoint: "{{ (capm3_hosts | selectattr('role', 'eq', 'control-plane') | first).ip }}"
+# Nothing to wipe on VMs that are destroyed afterwards.
+capm3_automated_cleaning_mode: disabled
+capm3_ssh_authorized_keys:
+  - "{{ lookup('ansible.builtin.file', carrack_test_ssh_key ~ '.pub') }}"
+# Fails fast on what BMO doesn't report (files/host-failed.sh).
+capm3_host_wait_abort_command: "{{ carrack_test_dir }}/files/host-failed.sh"
+
+# The hosts: libvirt VMs, each with a fixed UUID (its Redfish system ID), MAC
+# and DHCP lease. uuid, ip and vcpus are the test's own fields.
+capm3_hosts:
+  - name: carrack-cp-0
+    role: control-plane
+    boot_mac: 52:54:00:ca:7a:20
+    # The disk is virtio; BMO's default hint is /dev/sda.
+    root_device_hints:
+      deviceName: /dev/vda
+    bmc:
+      address: redfish-virtualmedia+{{ carrack_test_redfish }}/Systems/2b1f6c3e-0a7d-4c55-9e1a-ca7a00000020
+      # sushy-tools has no authentication, but BMO requires credentials.
+      username: admin
+      password: password
+      disable_certificate_verification: true
+    uuid: 2b1f6c3e-0a7d-4c55-9e1a-ca7a00000020
+    ip: 192.168.150.20
+    # The control plane plus Kube-OVN's central components request about 2 CPUs.
+    vcpus: 4
+  - name: carrack-worker-0
+    role: worker
+    boot_mac: 52:54:00:ca:7a:21
+    root_device_hints:
+      deviceName: /dev/vda
+    bmc:
+      address: redfish-virtualmedia+{{ carrack_test_redfish }}/Systems/2b1f6c3e-0a7d-4c55-9e1a-ca7a00000021
+      username: admin
+      password: password
+      disable_certificate_verification: true
+    uuid: 2b1f6c3e-0a7d-4c55-9e1a-ca7a00000021
+    ip: 192.168.150.21
+    vcpus: 2
+
+# --- The checks (checks/) ----------------------------------------------------
+
+# What the testinfra checks read, written by datacenter.yml.
+carrack_test_config:
+  kubernetes_version: "{{ carrack_test_kubernetes_version }}"
+  kernel: "{{ carrack_test_kernel }}"
+  nvidia_fs: "{{ carrack_test_nvidia_fs | bool }}"
+  host_ip: "{{ carrack_test_host_ip }}"
+  redfish: "{{ carrack_test_redfish }}"
+  image_url: "{{ capm3_image_url }}"
+  image_checksum_file: "{{ carrack_test_image }}.sha256"
+  ironic_api: http://{{ carrack_test_host_ip }}:6385/
+  curl_image: "{{ carrack_test_curl_image }}"
+  external_url: "{{ carrack_test_external_url }}"
+  log_dir: "{{ carrack_test_log_dir }}"
+  kubectl: "{{ capm3_work_dir }}/bin/kubectl"
+  bootstrap_kubeconfig: "{{ capm3_bootstrap_kubeconfig }}"
+  bootstrap_node: "{{ capm3_bootstrap_name }}-control-plane"
+  cluster_name: "{{ capm3_cluster_name }}"
+  cluster_namespace: "{{ capm3_namespace }}"
+  cluster_kubeconfig: "{{ capm3_cluster_kubeconfig }}"
+  ssh_config: "{{ carrack_test_ssh_config }}"
+  nodes: "{{ capm3_hosts | map('dict2items') | map('selectattr', 'key', 'in', ['name', 'role', 'uuid', 'ip', 'boot_mac']) | map('items2dict') | list }}"

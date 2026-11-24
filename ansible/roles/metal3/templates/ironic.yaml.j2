@@ -1,0 +1,18 @@
+# SPDX-License-Identifier: Apache-2.0
+#
+# BMO finds Ironic by this name and namespace (bmo-kustomization.yaml.j2).
+apiVersion: ironic.metal3.io/v1alpha1
+kind: Ironic
+metadata:
+  name: ironic
+  namespace: "{{ capm3_bmo_namespace }}"
+spec:
+  version: "{{ capm3_ironic_version }}"
+  images:
+    deployRamdiskDownloader: "{{ capm3_ipa_downloader_image }}"
+  networking:
+    externalIP: "{{ capm3_ironic_ip }}"
+{% if capm3_ironic_extra_kernel_params %}
+  deployRamdisk:
+    extraKernelParams: "{{ capm3_ironic_extra_kernel_params }}"
+{% endif %}

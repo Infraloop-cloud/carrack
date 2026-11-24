@@ -1,0 +1,52 @@
+# SPDX-License-Identifier: Apache-2.0
+- name: Check the architecture
+  ansible.builtin.assert:
+    that: ansible_facts.architecture == 'x86_64'
+    fail_msg: The tools are pinned for linux-amd64 only.
+    quiet: true
+
+- name: Install kind, kubectl and clusterctl
+  ansible.builtin.get_url:
+    url: "{{ item.url }}"
+    dest: "{{ item.dest }}"
+    checksum: "sha256:{{ item.sha256 }}"
+    mode: "0755"
+  loop:
+    - url: https://github.com/kubernetes-sigs/kind/releases/download/{{ capm3_kind_version }}/kind-linux-amd64
+      dest: "{{ capm3_kind }}"
+      sha256: "{{ capm3_kind_sha256 }}"
+    - url: https://dl.k8s.io/release/{{ capm3_kubectl_version }}/bin/linux/amd64/kubectl
+      dest: "{{ capm3_kubectl }}"
+      sha256: "{{ capm3_kubectl_sha256 }}"
+    - url: https://github.com/kubernetes-sigs/cluster-api/releases/download/{{ capm3_capi_version }}/clusterctl-linux-amd64
+      dest: "{{ capm3_clusterctl }}"
+      sha256: "{{ capm3_clusterctl_sha256 }}"
+  loop_control:
+    label: "{{ item.dest | basename }}"
+
+- name: Download helm
+  ansible.builtin.get_url:
+    url: https://get.helm.sh/helm-{{ capm3_helm_version }}-linux-amd64.tar.gz
+    dest: "{{ capm3_downloads_dir }}/helm-{{ capm3_helm_version }}-linux-amd64.tar.gz"
+    checksum: "sha256:{{ capm3_helm_sha256 }}"
+    mode: "0644"
+
+- name: Unpack helm
+  ansible.builtin.unarchive:
+    src: "{{ capm3_downloads_dir }}/helm-{{ capm3_helm_version }}-linux-amd64.tar.gz"
+    dest: "{{ capm3_downloads_dir }}"
+    remote_src: true
+    include:
+      - linux-amd64/helm
+    creates: "{{ capm3_downloads_dir }}/linux-amd64/helm-{{ capm3_helm_version }}"
+
+# Named by version so that a new pin unpacks again (see creates above).
+- name: Install helm
+  ansible.builtin.copy:
+    src: "{{ capm3_downloads_dir }}/linux-amd64/helm"
+    dest: "{{ item }}"
+    remote_src: true
+    mode: "0755"
+  loop:
+    - "{{ capm3_downloads_dir }}/linux-amd64/helm-{{ capm3_helm_version }}"
+    - "{{ capm3_helm }}"

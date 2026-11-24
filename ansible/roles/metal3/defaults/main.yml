@@ -1,0 +1,20 @@
+# SPDX-License-Identifier: Apache-2.0
+#
+# Metal3 on the bootstrap cluster. CAPI 1.14 (contract v1beta2) supports
+# management clusters 1.33-1.37; CAPM3 and IPAM 1.14 implement that contract.
+capm3_infrastructure_version: v1.14.2
+capm3_ipam_version: v1.14.2
+
+# ironic-standalone-operator runs Ironic: virtual media only (no DHCP or
+# iPXE), plain HTTP and an ephemeral database.
+capm3_irso_version: v0.12.0
+capm3_irso_manifest_sha256: c3c60c4d1cd37ba8d8f0874ffb520d4a64b17f57923b16d578b8399c3d28c67c
+capm3_ironic_version: "39.0"
+# Downloads Ironic's agent ramdisk. The operator defaults it to :latest.
+capm3_ipa_downloader_image: quay.io/metal3-io/ironic-ipa-downloader:main_2026-10-07_72b868f7b2c6c4e4bcbf264c5876482acfe6a198@sha256:1531525f893a92b550097a8d8080f47ca0476d980720594114c28ca5da0ca547
+# Kernel parameters for the agent ramdisk, e.g. a serial console.
+capm3_ironic_extra_kernel_params: ""
+
+# The Bare Metal Operator, taking Ironic's endpoint and credentials from the
+# Ironic resource.
+capm3_bmo_version: v0.14.2

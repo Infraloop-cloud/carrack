@@ -1,0 +1,21 @@
+<!--
+  SPDX-License-Identifier: Apache-2.0
+
+  The provisioning network. forward mode='open' makes libvirt add no firewall
+  rules of its own, so Ironic (in kind, on docker's bridge) can reach the
+  agent on the VMs; files/firewall.sh adds the NAT that gives the VMs internet
+  access. Each host gets a fixed DHCP lease.
+-->
+<network>
+  <name>{{ carrack_test_net_name }}</name>
+  <forward mode='open'/>
+  <bridge name='{{ carrack_test_bridge }}' stp='on' delay='0'/>
+  <ip address='{{ carrack_test_host_ip }}' prefix='{{ carrack_test_subnet.split("/")[1] }}'>
+    <dhcp>
+      <range start='{{ carrack_test_host_ip.rsplit(".", 1)[0] }}.100' end='{{ carrack_test_host_ip.rsplit(".", 1)[0] }}.200'/>
+{% for host in capm3_hosts %}
+      <host mac='{{ host.boot_mac }}' name='{{ host.name }}' ip='{{ host.ip }}'/>
+{% endfor %}
+    </dhcp>
+  </ip>
+</network>

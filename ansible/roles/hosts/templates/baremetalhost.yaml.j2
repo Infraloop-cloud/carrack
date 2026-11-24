@@ -1,0 +1,23 @@
+# SPDX-License-Identifier: Apache-2.0
+#
+# One host (item, from capm3_hosts). Enrolled powered off: CAPM3 powers it on
+# to provision it.
+apiVersion: metal3.io/v1alpha1
+kind: BareMetalHost
+metadata:
+  name: "{{ item.name }}"
+  namespace: "{{ capm3_namespace }}"
+  labels:
+    "{{ capm3_host_role_label }}": "{{ item.role }}"
+spec:
+  online: false
+  bootMode: "{{ item.boot_mode | default(capm3_host_boot_mode) }}"
+  bootMACAddress: "{{ item.boot_mac }}"
+  automatedCleaningMode: "{{ item.automated_cleaning_mode | default(capm3_automated_cleaning_mode) }}"
+{% if item.root_device_hints is defined %}
+  rootDeviceHints: {{ item.root_device_hints | to_json }}
+{% endif %}
+  bmc:
+    address: "{{ item.bmc.address }}"
+    credentialsName: "{{ item.name }}-bmc"
+    disableCertificateVerification: {{ item.bmc.disable_certificate_verification | default(false) | bool | to_json }}

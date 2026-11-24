@@ -1,0 +1,10 @@
+# SPDX-License-Identifier: Apache-2.0
+- name: Create the work directories
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: directory
+    mode: "0700"
+  loop:
+    - "{{ capm3_work_dir }}"
+    - "{{ capm3_bin_dir }}"
+    - "{{ capm3_downloads_dir }}"

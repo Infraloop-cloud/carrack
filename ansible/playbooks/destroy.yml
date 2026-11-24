@@ -1,0 +1,15 @@
+# SPDX-License-Identifier: Apache-2.0
+#
+# Deletes the kind bootstrap cluster:
+#   ansible-playbook carrack.capm3.destroy -e @cluster.yml
+# Until the cluster manages itself, Cluster API and Metal3 run there: with it
+# gone, nothing replaces failed Machines or manages the hosts.
+- name: Delete the carrack bootstrap cluster
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  tasks:
+    - name: Delete the bootstrap cluster
+      ansible.builtin.include_role:
+        name: carrack.capm3.bootstrap
+        tasks_from: destroy

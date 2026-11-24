@@ -1,0 +1,23 @@
+# SPDX-License-Identifier: Apache-2.0
+#
+# The Bare Metal Operator, configured to take Ironic's endpoint and
+# credentials from the Ironic resource (ironic.yaml.j2) managed by
+# ironic-standalone-operator.
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+  - https://github.com/metal3-io/baremetal-operator/config/use-irso?ref={{ capm3_bmo_version }}
+
+images:
+  - name: quay.io/metal3-io/baremetal-operator
+    newTag: "{{ capm3_bmo_version }}"
+
+generatorOptions:
+  disableNameSuffixHash: true
+
+configMapGenerator:
+  - name: ironic
+    namespace: "{{ capm3_bmo_namespace }}"
+    behavior: merge
+    literals:
+      - IRONIC_NAMESPACE={{ capm3_bmo_namespace }}

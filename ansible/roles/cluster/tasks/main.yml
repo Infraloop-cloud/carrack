@@ -1,0 +1,117 @@
+# SPDX-License-Identifier: Apache-2.0
+- name: Sort the hosts by role
+  ansible.builtin.set_fact:
+    capm3_control_plane_hosts: "{{ capm3_hosts | selectattr('role', 'eq', 'control-plane') | list }}"
+    capm3_worker_hosts: "{{ capm3_hosts | selectattr('role', 'eq', 'worker') | list }}"
+
+# More than one control-plane host needs a virtual IP for the API.
+- name: Check the cluster settings
+  ansible.builtin.assert:
+    that:
+      - capm3_control_plane_hosts | length == 1
+      - capm3_kubernetes_version is match('^[0-9]+\.[0-9]+\.[0-9]+$')
+      - capm3_image_url | length > 0
+      - capm3_image_checksum_url | length > 0
+      - capm3_control_plane_endpoint | length > 0
+    fail_msg: >-
+      Needs exactly one control-plane host, capm3_kubernetes_version (like
+      1.36.5), capm3_image_url, capm3_image_checksum_url and
+      capm3_control_plane_endpoint.
+    quiet: true
+
+- name: Write the cluster's manifests
+  ansible.builtin.template:
+    src: cluster.yaml.j2
+    dest: "{{ capm3_work_dir }}/{{ capm3_cluster_name }}.yaml"
+    mode: "0644"
+
+- name: Create the cluster
+  kubernetes.core.k8s:
+    kubeconfig: "{{ capm3_bootstrap_kubeconfig }}"
+    src: "{{ capm3_work_dir }}/{{ capm3_cluster_name }}.yaml"
+  register: capm3_cluster
+  retries: 10
+  delay: 5
+  until: capm3_cluster is succeeded
+
+# Ironic boots the agent again; it writes the image and a config drive
+# (kubeadm's cloud-init) to the disk, and the host then boots the image.
+- name: Wait for the control-plane host to be provisioned
+  carrack.capm3.baremetalhost_wait:
+    name: "{{ item.name }}"
+    namespace: "{{ capm3_namespace }}"
+    states: [provisioned]
+    timeout: "{{ capm3_provision_timeout }}"
+    abort_command: "{{ capm3_host_wait_abort_command or omit }}"
+    kubeconfig: "{{ capm3_bootstrap_kubeconfig }}"
+    kubectl: "{{ capm3_kubectl }}"
+  loop: "{{ capm3_control_plane_hosts }}"
+  loop_control:
+    label: "{{ item.name }}"
+
+- name: Wait for the control plane to be initialized
+  ansible.builtin.command:
+    argv:
+      - "{{ capm3_kubectl }}"
+      - --kubeconfig={{ capm3_bootstrap_kubeconfig }}
+      - --namespace={{ capm3_namespace }}
+      - wait
+      - cluster/{{ capm3_cluster_name }}
+      - --for=condition=ControlPlaneInitialized
+      - --timeout={{ capm3_machine_timeout }}s
+  changed_when: false
+
+- name: Read the cluster's admin kubeconfig
+  kubernetes.core.k8s_info:
+    kubeconfig: "{{ capm3_bootstrap_kubeconfig }}"
+    kind: Secret
+    namespace: "{{ capm3_namespace }}"
+    name: "{{ capm3_cluster_name }}-kubeconfig"
+  register: capm3_kubeconfig_secret
+  no_log: true
+
+- name: Save the cluster's admin kubeconfig
+  ansible.builtin.copy:
+    content: "{{ capm3_kubeconfig_secret.resources[0].data.value | b64decode }}"
+    dest: "{{ capm3_cluster_kubeconfig }}"
+    mode: "0600"
+  no_log: true
+
+- name: Wait for the cluster's API
+  ansible.builtin.command:
+    argv: ["{{ capm3_kubectl }}", "--kubeconfig={{ capm3_cluster_kubeconfig }}", get, --raw, /readyz]
+  register: capm3_readyz
+  retries: 30
+  delay: 5
+  until: capm3_readyz is succeeded
+  changed_when: false
+
+# A worker's join configuration exists once the control plane is
+# initialized, so the workers follow it.
+- name: Wait for the workers to be provisioned
+  carrack.capm3.baremetalhost_wait:
+    name: "{{ item.name }}"
+    namespace: "{{ capm3_namespace }}"
+    states: [provisioned]
+    timeout: "{{ capm3_provision_timeout }}"
+    abort_command: "{{ capm3_host_wait_abort_command or omit }}"
+    kubeconfig: "{{ capm3_bootstrap_kubeconfig }}"
+    kubectl: "{{ capm3_kubectl }}"
+  loop: "{{ capm3_worker_hosts }}"
+  loop_control:
+    label: "{{ item.name }}"
+
+# A Machine is Running once its Node exists and CAPM3 has set the Node's
+# provider ID, after kubeadm init or join has finished on the host.
+- name: Wait for the Machines
+  ansible.builtin.command:
+    argv:
+      - "{{ capm3_kubectl }}"
+      - --kubeconfig={{ capm3_bootstrap_kubeconfig }}
+      - --namespace={{ capm3_namespace }}
+      - wait
+      - machine
+      - --selector=cluster.x-k8s.io/cluster-name={{ capm3_cluster_name }}
+      - --for=jsonpath={.status.phase}=Running
+      - --timeout={{ capm3_machine_timeout }}s
+  changed_when: false

@@ -1,0 +1,75 @@
+# SPDX-License-Identifier: Apache-2.0
+- name: Check that there are hosts
+  ansible.builtin.assert:
+    that: capm3_hosts | length > 0
+    fail_msg: List the machines in capm3_hosts.
+    quiet: true
+
+- name: Check the hosts
+  ansible.builtin.assert:
+    that:
+      - item.name is defined
+      - item.role in ['control-plane', 'worker']
+      - item.boot_mac is defined
+      - item.bmc.address is defined
+      - item.bmc.username is defined
+      - item.bmc.password is defined
+    fail_msg: >-
+      Each host in capm3_hosts needs a name, a role (control-plane or
+      worker), a boot_mac and bmc.address, bmc.username and bmc.password.
+    quiet: true
+  loop: "{{ capm3_hosts }}"
+  loop_control:
+    label: "{{ item.name | default('(no name)') }}"
+
+- name: Create the namespace
+  kubernetes.core.k8s:
+    kubeconfig: "{{ capm3_bootstrap_kubeconfig }}"
+    kind: Namespace
+    name: "{{ capm3_namespace }}"
+
+- name: Create the BMC credentials
+  kubernetes.core.k8s:
+    kubeconfig: "{{ capm3_bootstrap_kubeconfig }}"
+    definition:
+      apiVersion: v1
+      kind: Secret
+      metadata:
+        name: "{{ item.name }}-bmc"
+        namespace: "{{ capm3_namespace }}"
+      type: Opaque
+      stringData:
+        username: "{{ item.bmc.username }}"
+        password: "{{ item.bmc.password }}"
+  loop: "{{ capm3_hosts }}"
+  loop_control:
+    label: "{{ item.name }}"
+  no_log: true
+
+# BMO's webhook may take a moment to answer after it is available.
+- name: Enroll the hosts
+  kubernetes.core.k8s:
+    kubeconfig: "{{ capm3_bootstrap_kubeconfig }}"
+    definition: "{{ lookup('ansible.builtin.template', 'baremetalhost.yaml.j2') | from_yaml }}"
+  loop: "{{ capm3_hosts }}"
+  loop_control:
+    label: "{{ item.name }}"
+  register: capm3_bmh
+  retries: 30
+  delay: 5
+  until: capm3_bmh is succeeded
+
+# The hosts are inspected together; this waits for each in turn.
+# Provisioned too, so that the playbook can run again.
+- name: Wait for the hosts to be inspected
+  carrack.capm3.baremetalhost_wait:
+    name: "{{ item.name }}"
+    namespace: "{{ capm3_namespace }}"
+    states: [available, provisioned]
+    timeout: "{{ capm3_host_inspection_timeout }}"
+    abort_command: "{{ capm3_host_wait_abort_command or omit }}"
+    kubeconfig: "{{ capm3_bootstrap_kubeconfig }}"
+    kubectl: "{{ capm3_kubectl }}"
+  loop: "{{ capm3_hosts }}"
+  loop_control:
+    label: "{{ item.name }}"

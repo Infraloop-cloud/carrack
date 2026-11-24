@@ -1,0 +1,9 @@
+# SPDX-License-Identifier: Apache-2.0
+capm3_bootstrap_node_image: kindest/node:v1.36.4@sha256:099e049362a1526b2db71494e1947aae99bd16290d7c895f2b7ea312e3cbfaed
+
+# kind copies the host's DNS search domains into its node, and kubelet into
+# every pod, with ndots:5. Lookups under some search domains (Azure's, on
+# GitHub's runners) stop glibc's search-list walk before it tries the name
+# itself, so Ironic's ramdisk downloader cannot resolve external names. The
+# bootstrap cluster needs none of the host's search domains.
+capm3_bootstrap_drop_search_domains: true

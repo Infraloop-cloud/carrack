@@ -1,0 +1,25 @@
+# SPDX-License-Identifier: Apache-2.0
+namespace: carrack
+name: capm3
+version: 0.1.0
+readme: README.md
+authors:
+  - Infraloop.cloud <hello@infraloop.cloud>
+description: >-
+  Deploy a first Kubernetes cluster on bare metal with Cluster API and Metal3
+  (CAPM3), from a temporary kind bootstrap cluster, with carrack node images.
+license:
+  - Apache-2.0
+tags:
+  - kubernetes
+  - clusterapi
+  - metal3
+  - baremetal
+  - infrastructure
+dependencies:
+  kubernetes.core: ">=6.0.0"
+repository: https://github.com/Infraloop-cloud/carrack
+documentation: https://github.com/Infraloop-cloud/carrack/tree/main/ansible
+issues: https://github.com/Infraloop-cloud/carrack/issues
+build_ignore:
+  - "*.tar.gz"

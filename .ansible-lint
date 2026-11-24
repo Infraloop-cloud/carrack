@@ -1,0 +1,18 @@
+# SPDX-License-Identifier: Apache-2.0
+#
+# ansible-lint settings (.github/workflows/lint.yaml runs it from the
+# repository root, with the collections in tests/cluster/requirements.yml).
+profile: moderate
+
+exclude_paths:
+  - .github/
+  - images/
+
+kinds:
+  - vars: "**/tests/cluster/vars.yml"
+  - tasks: "**/tests/cluster/tasks/*.yml"
+  - playbook: "**/tests/cluster/{datacenter,logs,teardown}.yml"
+
+skip_list:
+  # The collection's roles share one prefix, capm3_, as they share settings.
+  - var-naming[no-role-prefix]

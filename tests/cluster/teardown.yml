@@ -1,0 +1,73 @@
+# SPDX-License-Identifier: Apache-2.0
+#
+# Removes everything the test created; safe to run when some or all of it is
+# already gone.
+- name: Tear down the cluster test
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  tasks:
+    - name: Delete the bootstrap cluster
+      ansible.builtin.include_role:
+        name: carrack.capm3.bootstrap
+        tasks_from: destroy
+
+    - name: Remove the cluster's kubeconfig
+      ansible.builtin.file:
+        path: "{{ capm3_cluster_kubeconfig }}"
+        state: absent
+
+    - name: Stop sushy-tools and the image server
+      ansible.builtin.command:
+        argv: [systemctl, stop, carrack-sushy, carrack-images]
+      become: true
+      register: carrack_test_stop
+      failed_when: false
+      changed_when: carrack_test_stop.rc == 0
+
+    - name: Remove the VMs
+      ansible.builtin.command:
+        argv: "{{ ['virsh', '--connect', 'qemu:///system'] + item[1] + [item[0].name] }}"
+      loop: "{{ capm3_hosts | product([['destroy'], ['undefine', '--nvram']]) | list }}"
+      loop_control:
+        label: "{{ item[1][0] }} {{ item[0].name }}"
+      become: true
+      register: carrack_test_vm_removed
+      failed_when: false
+      changed_when: carrack_test_vm_removed.rc == 0
+
+    - name: Remove the VMs' disks and serial logs
+      ansible.builtin.file:
+        path: "{{ item[1] | format(item[0].name) }}"
+        state: absent
+      loop: "{{ capm3_hosts | product(['/var/lib/libvirt/images/%s.qcow2', '/var/log/libvirt/qemu/%s-serial.log']) | list }}"
+      loop_control:
+        label: "{{ item[1] | format(item[0].name) }}"
+      become: true
+
+    - name: Remove the virtual media pool and the provisioning network
+      ansible.builtin.command:
+        argv: "{{ ['virsh', '--connect', 'qemu:///system'] + item }}"
+      loop:
+        - [pool-destroy, "{{ carrack_test_vmedia_pool }}"]
+        - [pool-undefine, "{{ carrack_test_vmedia_pool }}"]
+        - [net-destroy, "{{ carrack_test_net_name }}"]
+        - [net-undefine, "{{ carrack_test_net_name }}"]
+      loop_control:
+        label: "{{ item | join(' ') }}"
+      become: true
+      register: carrack_test_removed
+      failed_when: false
+      changed_when: carrack_test_removed.rc == 0
+
+    - name: Remove the virtual media pool's directory
+      ansible.builtin.file:
+        path: "{{ carrack_test_vmedia_pool_dir }}"
+        state: absent
+      become: true
+
+    - name: Remove forwarding and NAT for the provisioning network
+      ansible.builtin.command:
+        argv: ["{{ carrack_test_dir }}/files/firewall.sh", del, "{{ carrack_test_subnet }}", "{{ carrack_test_bridge }}"]
+      become: true
+      changed_when: false

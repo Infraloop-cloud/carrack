@@ -1,0 +1,10 @@
+# SPDX-License-Identifier: Apache-2.0
+#
+# carrack clusters use Kube-OVN, installed with its v2 Helm chart. The chart's
+# default pod and service networks are the cluster's (capm3_pod_cidr,
+# capm3_service_cidr), and it runs OVN central on nodes labelled
+# kube-ovn/role=master (set by kubelet on the control plane).
+capm3_kube_ovn_version: v1.16.17
+capm3_kube_ovn_chart: oci://ghcr.io/kubeovn/charts/kube-ovn-v2
+# The chart archive's checksum.
+capm3_kube_ovn_chart_sha256: e1e4b7f6df3310225e6e0572e673c33d76581253b0d064e10c6b5b54ef1aefa7

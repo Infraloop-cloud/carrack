@@ -1,0 +1,18 @@
+# SPDX-License-Identifier: Apache-2.0
+#
+# Deploys a cluster onto bare-metal hosts with Cluster API and Metal3, from a
+# kind bootstrap cluster on this machine:
+#   ansible-playbook carrack.capm3.deploy -e @cluster.yml
+# See the collection's README for the settings.
+- name: Deploy a carrack cluster with Cluster API and Metal3
+  hosts: localhost
+  connection: local
+  gather_facts: true
+  gather_subset: [min]
+  roles:
+    - carrack.capm3.tools
+    - carrack.capm3.bootstrap
+    - carrack.capm3.metal3
+    - carrack.capm3.hosts
+    - carrack.capm3.cluster
+    - carrack.capm3.cni

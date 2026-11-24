@@ -1,0 +1,17 @@
+# SPDX-License-Identifier: Apache-2.0
+#
+# One node. Ironic runs on it with host networking; its API and image server
+# are published on capm3_ironic_ip, which the Ironic resource advertises as
+# its external IP. The hosts and their BMCs reach Ironic there, so nothing
+# has to route to the container's own address.
+kind: Cluster
+apiVersion: kind.x-k8s.io/v1alpha4
+nodes:
+  - role: control-plane
+    extraPortMappings:
+      - containerPort: {{ capm3_ironic_api_port }}
+        hostPort: {{ capm3_ironic_api_port }}
+        listenAddress: "{{ capm3_ironic_ip }}"
+      - containerPort: {{ capm3_ironic_http_port }}
+        hostPort: {{ capm3_ironic_http_port }}
+        listenAddress: "{{ capm3_ironic_ip }}"
