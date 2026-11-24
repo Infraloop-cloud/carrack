@@ -1,0 +1,161 @@
+# SPDX-License-Identifier: Apache-2.0
+#
+# Metal3's pivot (https://book.metal3.io/capm3/pivoting): Cluster API,
+# Ironic and BMO installed in the cluster, the bootstrap cluster's Ironic
+# deleted so that it can't interfere, then clusterctl move. The hosts stay as
+# they are: CAPM3 pauses their BareMetalHosts and saves their status for the
+# move, and the cluster's Ironic adopts them.
+- name: Check the pivot settings
+  ansible.builtin.assert:
+    that:
+      - capm3_pivot_ironic_host in (capm3_hosts | selectattr('role', 'eq', 'worker') | map(attribute='name') | list)
+      - capm3_pivot_ironic_ip | length > 0
+    fail_msg: >-
+      Needs capm3_pivot_ironic_host, a worker in capm3_hosts (default: the
+      first), and capm3_pivot_ironic_ip, its address.
+    quiet: true
+
+- name: Check for the cluster's kubeconfig
+  ansible.builtin.stat:
+    path: "{{ capm3_cluster_kubeconfig }}"
+  register: capm3_pivot_kubeconfig
+  failed_when: not capm3_pivot_kubeconfig.stat.exists
+
+# Before Cluster API is installed in it, the API isn't found.
+- name: Look for the cluster in itself
+  kubernetes.core.k8s_info:
+    kubeconfig: "{{ capm3_cluster_kubeconfig }}"
+    api_version: cluster.x-k8s.io/v1beta2
+    kind: Cluster
+    namespace: "{{ capm3_namespace }}"
+    name: "{{ capm3_cluster_name }}"
+  register: capm3_pivot_moved
+
+- name: Install Cluster API, Ironic and the Bare Metal Operator in the cluster
+  ansible.builtin.include_role:
+    name: carrack.capm3.metal3
+  vars:
+    capm3_metal3_kubeconfig: "{{ capm3_cluster_kubeconfig }}"
+    capm3_metal3_ironic_ip: "{{ capm3_pivot_ironic_ip }}"
+    capm3_metal3_ironic_node_selector:
+      kubernetes.io/hostname: "{{ capm3_pivot_ironic_host }}"
+
+- name: Move the cluster
+  when: capm3_pivot_moved.resources | length == 0
+  block:
+    - name: Read the bootstrap cluster's BareMetalHost CRD
+      kubernetes.core.k8s_info:
+        kubeconfig: "{{ capm3_bootstrap_kubeconfig }}"
+        api_version: apiextensions.k8s.io/v1
+        kind: CustomResourceDefinition
+        name: baremetalhosts.metal3.io
+      register: capm3_pivot_bmh_crd
+
+    # The metal3 role labels it (bmo-kustomization.yaml.j2).
+    - name: Check that clusterctl move takes the BareMetalHosts
+      ansible.builtin.assert:
+        that:
+          - capm3_pivot_bmh_crd.resources | length == 1
+          - "'clusterctl.cluster.x-k8s.io/move-hierarchy' in capm3_pivot_bmh_crd.resources[0].metadata.labels | default({})"
+        fail_msg: >-
+          The bootstrap cluster's BareMetalHost CRD lacks clusterctl's move
+          labels: run carrack.capm3.deploy again first.
+        quiet: true
+
+    - name: Delete the bootstrap cluster's Ironic
+      kubernetes.core.k8s:
+        kubeconfig: "{{ capm3_bootstrap_kubeconfig }}"
+        api_version: ironic.metal3.io/v1alpha1
+        kind: Ironic
+        namespace: "{{ capm3_bmo_namespace }}"
+        name: ironic
+        state: absent
+        wait: true
+        wait_timeout: 300
+
+    # Pauses the cluster, waits for CAPM3 to pause the BareMetalHosts, then
+    # creates everything in the cluster and deletes it from the bootstrap
+    # cluster.
+    - name: Move Cluster API's and Metal3's resources into the cluster
+      ansible.builtin.command:
+        argv:
+          - "{{ capm3_clusterctl }}"
+          - move
+          - --kubeconfig={{ capm3_bootstrap_kubeconfig }}
+          - --to-kubeconfig={{ capm3_cluster_kubeconfig }}
+          - --namespace={{ capm3_namespace }}
+      environment: "{{ capm3_tool_environment }}"
+      changed_when: true
+
+    # It has nothing left to manage.
+    - name: Delete the bootstrap cluster's Bare Metal Operator
+      kubernetes.core.k8s:
+        kubeconfig: "{{ capm3_bootstrap_kubeconfig }}"
+        api_version: apps/v1
+        kind: Deployment
+        namespace: "{{ capm3_bmo_namespace }}"
+        name: baremetal-operator-controller-manager
+        state: absent
+        wait: true
+
+- name: Read the cluster's Ironic resource
+  kubernetes.core.k8s_info:
+    kubeconfig: "{{ capm3_cluster_kubeconfig }}"
+    api_version: ironic.metal3.io/v1alpha1
+    kind: Ironic
+    namespace: "{{ capm3_bmo_namespace }}"
+    name: ironic
+  register: capm3_pivot_ironic
+
+- name: Read the cluster's Ironic API credentials
+  kubernetes.core.k8s_info:
+    kubeconfig: "{{ capm3_cluster_kubeconfig }}"
+    kind: Secret
+    namespace: "{{ capm3_bmo_namespace }}"
+    name: "{{ capm3_pivot_ironic.resources[0].spec.apiCredentialsName }}"
+  register: capm3_pivot_ironic_credentials
+  no_log: true
+
+# BMO registers each host with the cluster's Ironic, which adopts it: active
+# without deploying it again. BMO names Ironic's nodes <namespace>~<name>.
+- name: Wait for the cluster's Ironic to adopt the hosts
+  ansible.builtin.uri:
+    url: http://{{ capm3_pivot_ironic_ip }}:{{ capm3_ironic_api_port }}/v1/nodes?fields=name,provision_state,last_error
+    url_username: "{{ capm3_pivot_ironic_credentials.resources[0].data.username | b64decode }}"
+    url_password: "{{ capm3_pivot_ironic_credentials.resources[0].data.password | b64decode }}"
+    force_basic_auth: true
+    headers:
+      X-OpenStack-Ironic-API-Version: latest
+  register: capm3_pivot_nodes
+  retries: "{{ (capm3_pivot_adopt_timeout | int / 10) | int }}"
+  delay: 10
+  until: >-
+    capm3_pivot_nodes is succeeded and
+    capm3_hosts | map(attribute='name') | map('regex_replace', '^', capm3_namespace ~ '~')
+    | difference(capm3_pivot_nodes.json.nodes | selectattr('provision_state', 'eq', 'active') | map(attribute='name') | list)
+    | length == 0
+
+- name: Wait for the cluster to be available, managed by itself
+  ansible.builtin.command:
+    argv:
+      - "{{ capm3_kubectl }}"
+      - --kubeconfig={{ capm3_cluster_kubeconfig }}
+      - --namespace={{ capm3_namespace }}
+      - wait
+      - cluster/{{ capm3_cluster_name }}
+      - --for=condition=Available
+      - --timeout={{ capm3_pivot_adopt_timeout }}s
+  changed_when: false
+
+- name: Wait for the Machines
+  ansible.builtin.command:
+    argv:
+      - "{{ capm3_kubectl }}"
+      - --kubeconfig={{ capm3_cluster_kubeconfig }}
+      - --namespace={{ capm3_namespace }}
+      - wait
+      - machine
+      - --selector=cluster.x-k8s.io/cluster-name={{ capm3_cluster_name }}
+      - --for=jsonpath={.status.phase}=Running
+      - --timeout={{ capm3_pivot_adopt_timeout }}s
+  changed_when: false

@@ -2,8 +2,8 @@
 #
 # Deletes the kind bootstrap cluster:
 #   ansible-playbook carrack.capm3.destroy -e @cluster.yml
-# Until the cluster manages itself, Cluster API and Metal3 run there: with it
-# gone, nothing replaces failed Machines or manages the hosts.
+# Run it after carrack.capm3.pivot. Before, Cluster API and Metal3 run there:
+# with it gone, nothing replaces failed Machines or manages the hosts.
 - name: Delete the carrack bootstrap cluster
   hosts: localhost
   connection: local

@@ -1,7 +1,16 @@
 # SPDX-License-Identifier: Apache-2.0
 #
-# Metal3 on the bootstrap cluster. CAPI 1.14 (contract v1beta2) supports
-# management clusters 1.33-1.37; CAPM3 and IPAM 1.14 implement that contract.
+# Metal3 on a management cluster: the bootstrap cluster by default, the
+# cluster itself when the pivot role includes this one. CAPI 1.14 (contract
+# v1beta2) supports management clusters 1.33-1.37; CAPM3 and IPAM 1.14
+# implement that contract.
+capm3_metal3_kubeconfig: "{{ capm3_bootstrap_kubeconfig }}"
+# Where Ironic is published to the hosts and their BMCs, and the nodes Ironic
+# may run on (it uses the node's host network, so that address must be the
+# node's).
+capm3_metal3_ironic_ip: "{{ capm3_ironic_ip }}"
+capm3_metal3_ironic_node_selector: {}
+
 capm3_infrastructure_version: v1.14.2
 capm3_ipam_version: v1.14.2
 

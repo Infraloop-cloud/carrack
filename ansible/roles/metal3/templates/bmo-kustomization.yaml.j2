@@ -15,6 +15,35 @@ images:
 generatorOptions:
   disableNameSuffixHash: true
 
+# BMO's CRDs aren't installed by clusterctl, which only moves the types it
+# knows: these labels make clusterctl move (the pivot role) take every
+# BareMetalHost, with its BMC secret, and HardwareData along with the
+# cluster. As in metal3-dev-env's pivot.
+patches:
+  - target:
+      kind: CustomResourceDefinition
+      name: baremetalhosts.metal3.io
+    patch: |-
+      apiVersion: apiextensions.k8s.io/v1
+      kind: CustomResourceDefinition
+      metadata:
+        name: baremetalhosts.metal3.io
+        labels:
+          clusterctl.cluster.x-k8s.io: ""
+          clusterctl.cluster.x-k8s.io/move: ""
+          clusterctl.cluster.x-k8s.io/move-hierarchy: ""
+  - target:
+      kind: CustomResourceDefinition
+      name: hardwaredata.metal3.io
+    patch: |-
+      apiVersion: apiextensions.k8s.io/v1
+      kind: CustomResourceDefinition
+      metadata:
+        name: hardwaredata.metal3.io
+        labels:
+          clusterctl.cluster.x-k8s.io: ""
+          clusterctl.cluster.x-k8s.io/move: ""
+
 configMapGenerator:
   - name: ironic
     namespace: "{{ capm3_bmo_namespace }}"

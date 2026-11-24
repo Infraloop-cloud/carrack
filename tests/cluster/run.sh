@@ -117,3 +117,9 @@ playbook carrack.capm3.deploy
 
 echo "=== Checks"
 checks cluster test_bootstrap.py test_metal3.py test_cluster.py test_nodes.py
+
+echo "=== carrack.capm3.pivot"
+playbook carrack.capm3.pivot
+
+echo "=== Checks after the pivot"
+checks pivot test_pivot.py

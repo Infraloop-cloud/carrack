@@ -27,7 +27,12 @@ tests/cluster/run.sh images/output/ubuntu-24.04-nvidia-1-36.qcow2
    BareMetalHosts don't always show.
 5. **Checks** of the bootstrap cluster, Metal3, the cluster and, over SSH, the
    nodes themselves.
-6. Collects logs into `tests/cluster/logs/` ([`logs.yml`](logs.yml)) and tears
+6. **`carrack.capm3.pivot`**: moves Cluster API and Metal3 into the cluster,
+   with Ironic on the worker.
+7. **Checks** that the cluster manages itself: its providers, Ironic and BMO,
+   the hosts adopted by its Ironic, and nothing left in the bootstrap
+   cluster.
+8. Collects logs into `tests/cluster/logs/` ([`logs.yml`](logs.yml)) and tears
    everything down ([`teardown.yml`](teardown.yml)), whatever the outcome.
 
 Each check's docstring is its line in the results table, which also goes to

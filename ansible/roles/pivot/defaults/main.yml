@@ -1,0 +1,16 @@
+# SPDX-License-Identifier: Apache-2.0
+#
+# Moving Cluster API and Metal3 from the bootstrap cluster into the cluster,
+# so that it manages itself.
+
+# The host (by name, from capm3_hosts) whose node runs Ironic in the
+# cluster: a worker, as the control plane doesn't take workloads. Ironic uses
+# the node's host network, and the hosts and their BMCs reach it on
+# capm3_pivot_ironic_ip, that node's address. Default: the first worker.
+capm3_pivot_ironic_host: "{{ capm3_hosts | selectattr('role', 'eq', 'worker') | map(attribute='name') | first | default('') }}"
+# Required.
+capm3_pivot_ironic_ip: ""
+
+# The cluster's Ironic starts with an empty database and adopts the hosts,
+# already provisioned, from their BareMetalHosts.
+capm3_pivot_adopt_timeout: 900

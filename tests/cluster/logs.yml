@@ -33,6 +33,22 @@
       cluster-get.txt: >-
         {{ carrack_test_kubectl }} --kubeconfig={{ capm3_cluster_kubeconfig }} get nodes,pods
         --all-namespaces --output=wide --request-timeout=20s
+      # After the pivot, Cluster API and Metal3 run in the cluster.
+      cluster-metal3.yaml: >-
+        {{ carrack_test_kubectl }} --kubeconfig={{ capm3_cluster_kubeconfig }} get ironic,baremetalhosts
+        --all-namespaces --output=yaml --request-timeout=20s
+      cluster-capi.yaml: >-
+        {{ carrack_test_kubectl }} --kubeconfig={{ capm3_cluster_kubeconfig }}
+        get clusters,kubeadmcontrolplanes,machinedeployments,machines,metal3clusters,metal3machines
+        --all-namespaces --output=yaml --request-timeout=20s
+      cluster-controllers.log: >-
+        for namespace in ironic-standalone-operator-system baremetal-operator-system capm3-system capi-system; do
+        for pod in $({{ carrack_test_kubectl }} --kubeconfig={{ capm3_cluster_kubeconfig }} --namespace=$namespace
+        get pods --output=name --request-timeout=20s); do
+        echo "=== $namespace $pod";
+        {{ carrack_test_kubectl }} --kubeconfig={{ capm3_cluster_kubeconfig }} --namespace=$namespace
+        logs $pod --all-containers --request-timeout=20s;
+        done; done
   tasks:
     - name: Create the log directory
       ansible.builtin.file:
