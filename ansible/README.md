@@ -21,8 +21,16 @@ It runs everything from the machine you run Ansible on:
    admin kubeconfig to `~/.carrack/<cluster>.kubeconfig`.
 6. **cni**: installs [Kube-OVN](https://kubeovn.github.io/).
 
-Moving Cluster API and Metal3 into the new cluster, so that it manages itself
-and the bootstrap cluster can go, is planned.
+Then `carrack.capm3.pivot` makes the cluster manage itself, so that the
+bootstrap cluster can go:
+
+7. **pivot**: installs Cluster API, Ironic and the Bare Metal Operator into
+   the cluster (the metal3 role again), with Ironic on a worker. Deletes the
+   bootstrap cluster's Ironic and runs
+   [`clusterctl move`](https://cluster-api.sigs.k8s.io/clusterctl/commands/move),
+   which takes the cluster's Cluster API resources and the BareMetalHosts
+   into the cluster. Waits for the cluster's Ironic to adopt the hosts, as
+   they are, without provisioning them again.
 
 ## Requirements
 
@@ -84,10 +92,25 @@ ansible-playbook carrack.capm3.deploy -e @cluster.yml
 kubectl --kubeconfig ~/.carrack/carrack.kubeconfig get nodes
 ```
 
-The playbook can be run again: it skips what already exists.
-`ansible-playbook carrack.capm3.destroy -e @cluster.yml` deletes the bootstrap
-cluster. Until the cluster manages itself, that leaves nothing to replace
-failed machines or manage the hosts.
+The playbook can be run again: it skips what already exists. Then:
+
+```bash
+ansible-playbook carrack.capm3.pivot -e @cluster.yml
+ansible-playbook carrack.capm3.destroy -e @cluster.yml
+kubectl --kubeconfig ~/.carrack/carrack.kubeconfig --namespace carrack get clusters,machines,baremetalhosts
+```
+
+The pivot moves the cluster into itself and destroy deletes the bootstrap
+cluster. Don't destroy the bootstrap cluster before the pivot: that leaves
+nothing to replace failed machines or manage the hosts.
+
+For the pivot, `capm3_pivot_ironic_ip` is required: the address of the
+worker that runs Ironic from then on (`capm3_pivot_ironic_host`, by default
+the first worker in `capm3_hosts`). The BMCs and hosts reach Ironic there, as
+they reached `capm3_ironic_ip` before, so give that worker a fixed address.
+Run the pivot when no host is being provisioned. It can be run again, but
+deploy can't once the cluster has moved: from then on, the cluster is
+managed in itself, with kubectl and its own kubeconfig.
 
 ### Hosts
 
@@ -120,6 +143,8 @@ The main settings, with their defaults:
 | `capm3_ssh_user` | `carrack` | User created on every node for `capm3_ssh_authorized_keys`, with passwordless sudo. |
 | `capm3_pod_cidr`, `capm3_service_cidr` | `10.16.0.0/16`, `10.96.0.0/12` | The cluster's networks (Kube-OVN's defaults). |
 | `capm3_ironic_extra_kernel_params` | | Kernel parameters for Ironic's agent, e.g. a serial console. |
+| `capm3_pivot_ironic_host` | the first worker | The host whose node runs Ironic after the pivot. |
+| `capm3_pivot_ironic_ip` | | That host's address. Required for the pivot. |
 | `capm3_host_wait_abort_command` | | Shell command that detects host failures the BareMetalHosts don't show (see the `baremetalhost_wait` module). |
 
 Every pinned version and checksum is a role default, in `roles/*/defaults/main.yml`.

@@ -1,0 +1,15 @@
+# SPDX-License-Identifier: Apache-2.0
+#
+# Moves Cluster API and Metal3 from the bootstrap cluster into the cluster
+# that carrack.capm3.deploy created, so that it manages itself:
+#   ansible-playbook carrack.capm3.pivot -e @cluster.yml
+# Then carrack.capm3.destroy deletes the bootstrap cluster. See the
+# collection's README.
+- name: Make a carrack cluster manage itself
+  hosts: localhost
+  connection: local
+  gather_facts: true
+  gather_subset: [min]
+  roles:
+    - carrack.capm3.tools
+    - carrack.capm3.pivot

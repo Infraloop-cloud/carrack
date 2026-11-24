@@ -11,7 +11,10 @@ spec:
   images:
     deployRamdiskDownloader: "{{ capm3_ipa_downloader_image }}"
   networking:
-    externalIP: "{{ capm3_ironic_ip }}"
+    externalIP: "{{ capm3_metal3_ironic_ip }}"
+{% if capm3_metal3_ironic_node_selector %}
+  nodeSelector: {{ capm3_metal3_ironic_node_selector | to_json }}
+{% endif %}
 {% if capm3_ironic_extra_kernel_params %}
   deployRamdisk:
     extraKernelParams: "{{ capm3_ironic_extra_kernel_params }}"

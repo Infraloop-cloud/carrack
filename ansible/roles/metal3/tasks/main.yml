@@ -3,7 +3,7 @@
   ansible.builtin.command:
     argv:
       - "{{ capm3_kubectl }}"
-      - --kubeconfig={{ capm3_bootstrap_kubeconfig }}
+      - --kubeconfig={{ capm3_metal3_kubeconfig }}
       - get
       - providers.clusterctl.cluster.x-k8s.io
       - --all-namespaces
@@ -23,7 +23,7 @@
     argv:
       - "{{ capm3_clusterctl }}"
       - init
-      - --kubeconfig={{ capm3_bootstrap_kubeconfig }}
+      - --kubeconfig={{ capm3_metal3_kubeconfig }}
       - --core=cluster-api:{{ capm3_capi_version }}
       - --bootstrap=kubeadm:{{ capm3_capi_version }}
       - --control-plane=kubeadm:{{ capm3_capi_version }}
@@ -44,7 +44,7 @@
 
 - name: Install ironic-standalone-operator
   kubernetes.core.k8s:
-    kubeconfig: "{{ capm3_bootstrap_kubeconfig }}"
+    kubeconfig: "{{ capm3_metal3_kubeconfig }}"
     src: "{{ capm3_downloads_dir }}/irso-{{ capm3_irso_version }}.yaml"
     apply: true
     server_side_apply:
@@ -54,7 +54,7 @@
   ansible.builtin.command:
     argv:
       - "{{ capm3_kubectl }}"
-      - --kubeconfig={{ capm3_bootstrap_kubeconfig }}
+      - --kubeconfig={{ capm3_metal3_kubeconfig }}
       - --namespace=ironic-standalone-operator-system
       - wait
       - deployment
@@ -65,14 +65,14 @@
 
 - name: Create the Bare Metal Operator's namespace
   kubernetes.core.k8s:
-    kubeconfig: "{{ capm3_bootstrap_kubeconfig }}"
+    kubeconfig: "{{ capm3_metal3_kubeconfig }}"
     kind: Namespace
     name: "{{ capm3_bmo_namespace }}"
 
 # The operator's webhook may take a moment to answer after it is available.
 - name: Create the Ironic resource
   kubernetes.core.k8s:
-    kubeconfig: "{{ capm3_bootstrap_kubeconfig }}"
+    kubeconfig: "{{ capm3_metal3_kubeconfig }}"
     definition: "{{ lookup('ansible.builtin.template', 'ironic.yaml.j2') | from_yaml }}"
   register: capm3_ironic
   retries: 30
@@ -84,7 +84,7 @@
   ansible.builtin.command:
     argv:
       - "{{ capm3_kubectl }}"
-      - --kubeconfig={{ capm3_bootstrap_kubeconfig }}
+      - --kubeconfig={{ capm3_metal3_kubeconfig }}
       - --namespace={{ capm3_bmo_namespace }}
       - wait
       - ironic/ironic
@@ -94,7 +94,7 @@
 
 - name: Check that Ironic's API answers on its published address
   ansible.builtin.uri:
-    url: http://{{ capm3_ironic_ip }}:{{ capm3_ironic_api_port }}/
+    url: http://{{ capm3_metal3_ironic_ip }}:{{ capm3_ironic_api_port }}/
   register: capm3_ironic_api
   retries: 30
   delay: 2
@@ -117,7 +117,7 @@
   ansible.builtin.command:
     argv:
       - "{{ capm3_kubectl }}"
-      - --kubeconfig={{ capm3_bootstrap_kubeconfig }}
+      - --kubeconfig={{ capm3_metal3_kubeconfig }}
       - apply
       - --kustomize={{ capm3_work_dir }}/bmo
   register: capm3_bmo
@@ -130,7 +130,7 @@
   ansible.builtin.command:
     argv:
       - "{{ capm3_kubectl }}"
-      - --kubeconfig={{ capm3_bootstrap_kubeconfig }}
+      - --kubeconfig={{ capm3_metal3_kubeconfig }}
       - --namespace={{ capm3_bmo_namespace }}
       - wait
       - deployment
