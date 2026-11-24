@@ -135,6 +135,73 @@
     | difference(capm3_pivot_nodes.json.nodes | selectattr('provision_state', 'eq', 'active') | map(attribute='name') | list)
     | length == 0
 
+# CAPM3 (up to at least v1.14) never sets Metal3DataReady on a moved
+# Metal3Machine without a Metal3DataTemplate: the Node already has its
+# provider ID, and that path skips what sets the condition otherwise
+# (SecretsSetExternally, metal3-io/cluster-api-provider-metal3#3054). Its
+# Ready stays Unknown, and the Machines never become available. Set the
+# condition as CAPM3 would, then annotate the Metal3Machines so that CAPM3
+# reconciles them and recomputes Ready.
+- name: Read the cluster's Metal3Machines
+  kubernetes.core.k8s_info:
+    kubeconfig: "{{ capm3_cluster_kubeconfig }}"
+    api_version: infrastructure.cluster.x-k8s.io/v1beta2
+    kind: Metal3Machine
+    namespace: "{{ capm3_namespace }}"
+    label_selectors:
+      - cluster.x-k8s.io/cluster-name={{ capm3_cluster_name }}
+  register: capm3_pivot_metal3machines
+  # Once CAPM3 has reconciled them in the cluster.
+  retries: 30
+  delay: 10
+  until: >-
+    capm3_pivot_metal3machines.resources | length == capm3_hosts | length and
+    capm3_pivot_metal3machines.resources | map(attribute='status.conditions', default=[]) | map('selectattr', 'type', 'eq', 'Ready')
+    | map('list') | select('eq', []) | list | length == 0
+
+- name: Mark the Metal3Machines' data ready
+  ansible.builtin.command:
+    argv:
+      - "{{ capm3_kubectl }}"
+      - --kubeconfig={{ capm3_cluster_kubeconfig }}
+      - --namespace={{ capm3_namespace }}
+      - patch
+      - metal3machine/{{ item.metadata.name }}
+      - --subresource=status
+      - --type=json
+      - --patch={{ [capm3_pivot_data_ready_patch] | to_json }}
+  vars:
+    # One expression, so that observedGeneration stays a number.
+    capm3_pivot_data_ready_patch: >-
+      {{ {'op': 'add', 'path': '/status/conditions/-', 'value': {
+      'type': 'Metal3DataReady', 'status': 'True', 'reason': 'SecretsSetExternally', 'message': '',
+      'observedGeneration': item.metadata.generation,
+      'lastTransitionTime': now(utc=true).strftime('%Y-%m-%dT%H:%M:%SZ')}} }}
+  loop: >-
+    {{ capm3_pivot_metal3machines.resources
+    | rejectattr('spec.dataTemplate', 'defined')
+    | rejectattr('status.conditions', 'undefined')
+    | list }}
+  loop_control:
+    label: "{{ item.metadata.name }}"
+  when: item.status.conditions | selectattr('type', 'eq', 'Metal3DataReady') | list | length == 0
+  register: capm3_pivot_data_ready
+  changed_when: true
+
+- name: Have CAPM3 reconcile the Metal3Machines
+  ansible.builtin.command:
+    argv:
+      - "{{ capm3_kubectl }}"
+      - --kubeconfig={{ capm3_cluster_kubeconfig }}
+      - --namespace={{ capm3_namespace }}
+      - annotate
+      - --overwrite
+      - metal3machine
+      - --selector=cluster.x-k8s.io/cluster-name={{ capm3_cluster_name }}
+      - carrack.infraloop.cloud/pivoted={{ now(utc=true).strftime('%Y-%m-%dT%H:%M:%SZ') }}
+  when: capm3_pivot_data_ready is changed
+  changed_when: true
+
 - name: Wait for the cluster to be available, managed by itself
   ansible.builtin.command:
     argv:
